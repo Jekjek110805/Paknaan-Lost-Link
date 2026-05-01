@@ -1,0 +1,6 @@
+{
+  "name": "Paknaan LostLink",
+  "description": "An innovative Lost and Found system for Barangay Paknaan featuring AI matching, QR code claims, and role-based management.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["AI-powered matching", "Real-time status tracking", "Secure QR claims"]
+}
