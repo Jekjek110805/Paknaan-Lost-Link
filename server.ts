@@ -21,6 +21,7 @@ const __dirname = path.dirname(__filename);
 const isProd = process.env.NODE_ENV === 'production';
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'paknaan-secret-key-change-in-production';
+const DATABASE_PATH = process.env.DATABASE_PATH?.trim() || './database.sqlite';
 const getAppUrl = () => {
   const configured = process.env.APP_URL?.trim();
   if (configured && !configured.startsWith('MY_')) return configured.replace(/\/+$/, '');
@@ -109,7 +110,7 @@ async function startServer() {
 
   // Database initialization
   const db = await open({
-    filename: './database.sqlite',
+    filename: DATABASE_PATH,
     driver: sqlite3.Database
   });
 
@@ -687,7 +688,8 @@ async function startServer() {
     const { 
       title, description, type, category, location, purok, zone,
       date_lost, date_found, contact_preference, additional_contact,
-      finder_name, finder_contact, turnover_to_barangay, storage_location
+      finder_name, finder_contact, turnover_to_barangay, storage_location,
+      image_url
     } = req.body;
     const itemZone = zone || purok;
     
@@ -698,11 +700,11 @@ async function startServer() {
     const result = await db.run(`
       INSERT INTO items (title, description, type, category, location, purok, date_lost, date_found, 
         contact_preference, additional_contact, finder_name, finder_contact, turnover_to_barangay, 
-        storage_location, user_id, status) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        storage_location, image_url, user_id, status) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
     `, [title, description, type, category, location, itemZone, date_lost, date_found, 
       contact_preference || 'message', additional_contact, finder_name, finder_contact, 
-      turnover_to_barangay ? 1 : 0, storage_location, req.user.id]);
+      turnover_to_barangay ? 1 : 0, storage_location, image_url || null, req.user.id]);
 
     await logActivity(req.user.id, 'create_item', 'item', result.lastID, `Created ${type} item: ${title}`);
     res.status(201).json({ message: 'Item reported successfully', id: result.lastID });
@@ -784,7 +786,7 @@ async function startServer() {
     query += ' ORDER BY claims.created_at DESC';
     
     const claims = await db.all(query, params);
-    res.json(claims);
+    res.json({ claims });
   });
 
   app.get('/api/claims/:id', authenticateToken, async (req, res) => {
@@ -801,7 +803,7 @@ async function startServer() {
   });
 
   app.post('/api/claims', authenticateToken, async (req: any, res) => {
-    const { item_id, message, proof_type } = req.body;
+    const { item_id, message, proof_type, proof_url } = req.body;
     
     const item = await db.get('SELECT * FROM items WHERE id = ?', [item_id]);
     if (!item) return res.status(404).json({ error: 'Item not found' });
@@ -816,9 +818,13 @@ async function startServer() {
       return res.status(400).json({ error: 'You already have a pending claim on this item' });
     }
 
+    if (!proof_url) {
+      return res.status(400).json({ error: 'Proof photo is required' });
+    }
+
     const result = await db.run(`
-      INSERT INTO claims (item_id, user_id, message, proof_type, status) VALUES (?, ?, ?, ?, 'pending')
-    `, [item_id, req.user.id, message, proof_type]);
+      INSERT INTO claims (item_id, user_id, message, proof_type, proof_url, status) VALUES (?, ?, ?, ?, ?, 'pending')
+    `, [item_id, req.user.id, message, proof_type, proof_url]);
 
     await logActivity(req.user.id, 'create_claim', 'claim', result.lastID, `Claimed item: ${item.title}`);
 

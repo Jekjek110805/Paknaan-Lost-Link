@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  --font-sans: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --color-primary: #4f8cff;
 }
 

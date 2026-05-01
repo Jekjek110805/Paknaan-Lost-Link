@@ -1,11 +1,11 @@
-import { useState, useEffect, createContext, useContext, type FormEvent, type ReactNode } from 'react';
+import { useState, useEffect, createContext, useContext, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { 
   Search, PlusCircle, User, Settings, MapPin, Calendar, Clock, ShieldCheck, 
   Bell, Menu, X, LayoutDashboard, LogOut, ChevronRight, TrendingUp, 
   Award, AlertCircle, CheckCircle, XCircle, Eye, Edit, Trash2, 
   QrCode, FileText, Download, Share2, Filter, ArrowLeft, Home as HomeIcon,
-  BarChart3, Users, Package, MessageSquare, Star, AlertTriangle, Mail
+  BarChart3, Users, Package, MessageSquare, Star, AlertTriangle, ImagePlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -20,6 +20,15 @@ function cn(...inputs: ClassValue[]) {
 const API_URL = '';
 const logoUrl = new URL('./assets/lostlink-logo-cropped.png', import.meta.url).href;
 
+const GoogleIcon = ({ className = 'h-5 w-5' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-.9 2.4-2 3.1l3.2 2.5c1.9-1.7 3-4.2 3-7.1 0-.8-.1-1.6-.2-2.4H12z" />
+    <path fill="#34A853" d="M6.4 14.3l-.7.5-2.6 2c1.7 3.3 5 5.4 8.9 5.4 2.7 0 5-.9 6.7-2.5l-3.2-2.5c-.9.6-2 1-3.5 1-2.6 0-4.8-1.7-5.6-4z" />
+    <path fill="#FBBC05" d="M3.1 6.8C2.4 8.3 2 10.1 2 12s.4 3.7 1.1 5.2l3.3-2.6c-.2-.8-.4-1.7-.4-2.6s.1-1.8.4-2.6L3.1 6.8z" />
+    <path fill="#4285F4" d="M12 5.8c1.5 0 2.8.5 3.8 1.5l2.9-2.9C17 2.8 14.7 1.8 12 1.8c-3.9 0-7.2 2.2-8.9 5.4l3.3 2.6c.8-2.3 3-4 5.6-4z" />
+  </svg>
+);
+
 async function apiCall(endpoint: string, options: any = {}) {
   const token = localStorage.getItem('token');
   const headers: any = { 'Content-Type': 'application/json' };
@@ -29,6 +38,21 @@ async function apiCall(endpoint: string, options: any = {}) {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Request failed');
   return data;
+}
+
+async function uploadImage(file: File) {
+  const token = localStorage.getItem('token');
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const res = await fetch('/api/upload/image', {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: formData,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Image upload failed');
+  return data.url as string;
 }
 
 // ==================== AUTH ====================
@@ -164,13 +188,24 @@ const Navbar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
     { name: 'Found Items', path: '/items/found' },
     { name: 'Report Item', path: '/post' },
   ];
+  const adminLinks = [
+    { name: 'Reports Queue', path: '/admin/reports' },
+    { name: 'Claims', path: '/admin/claims' },
+    { name: 'Users', path: '/admin/users' },
+  ];
 
   return (
     <nav className="glass-navbar sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between gap-4">
-          <Link to="/" className="flex min-w-0 items-center">
-            <img src={logoUrl} alt="LostLink Brgy Paknaan" className="h-10 w-auto max-w-[180px] object-contain sm:h-11 sm:max-w-[220px]" />
+          <Link to="/" className="flex min-w-0 items-center gap-3" aria-label="Paknaan LostLink home">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-white">
+              <img src={logoUrl} alt="" className="h-full w-full object-contain p-1" />
+            </span>
+            <span className="min-w-0 leading-none">
+              <span className="block text-lg font-black tracking-normal text-white sm:text-xl">Paknaan LostLink</span>
+              <span className="mt-1 hidden text-[10px] font-bold uppercase tracking-wider text-[#82b9ff] sm:block">Lost and Found System</span>
+            </span>
           </Link>
 
           <div className="hidden md:flex items-center gap-2">
@@ -186,11 +221,29 @@ const Navbar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
                 {link.name}
               </Link>
             ))}
+            {user?.role === 'admin' && adminLinks.map((link) => (
+              <Link
+                key={link.name}
+                to={link.path}
+                className={cn(
+                  "rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-colors hover:bg-white/10 hover:text-white",
+                  location.pathname === link.path ? "bg-[#4f8cff]/15 text-[#9dc4ff]" : "text-slate-300"
+                )}
+              >
+                {link.name}
+              </Link>
+            ))}
             {user ? (
               <div className="ml-2 flex items-center gap-2 border-l border-white/10 pl-4">
+                <Link to="/notifications" className="rounded-md p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white" aria-label="Notifications">
+                  <Bell className="h-4 w-4" />
+                </Link>
                 <Link to="/dashboard" className="inline-flex items-center gap-2 rounded-md border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-white/15" aria-label="Open dashboard">
                   <User className="h-4 w-4" />
                   <span>Dashboard</span>
+                </Link>
+                <Link to="/profile" className="rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
+                  Profile
                 </Link>
                 <button onClick={onLogout} className="rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-300 transition-colors hover:bg-[#ff5c74]/10 hover:text-[#ffa2ae]">
                   Logout
@@ -219,7 +272,7 @@ const Navbar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
         {isOpen && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="border-t border-white/10 bg-[#070b1a] md:hidden">
             <div className="space-y-1 px-4 py-3">
-              {navLinks.map((link) => (
+                {navLinks.map((link) => (
                 <Link
                   key={link.name}
                   to={link.path}
@@ -231,11 +284,27 @@ const Navbar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
                 >
                   {link.name}
                 </Link>
-              ))}
-              {user ? (
+                ))}
+                {user?.role === 'admin' && adminLinks.map((link) => (
+                  <Link
+                    key={link.name}
+                    to={link.path}
+                    onClick={() => setIsOpen(false)}
+                    className="block rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white"
+                  >
+                    {link.name}
+                  </Link>
+                ))}
+                {user ? (
                 <>
+                  <Link to="/notifications" onClick={() => setIsOpen(false)} className="block rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white">
+                    Notifications
+                  </Link>
                   <Link to="/dashboard" onClick={() => setIsOpen(false)} className="block rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white">
                     Dashboard
+                  </Link>
+                  <Link to="/profile" onClick={() => setIsOpen(false)} className="block rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white">
+                    Profile
                   </Link>
                   <button onClick={() => { onLogout(); setIsOpen(false); }} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-[#ffa2ae] transition hover:bg-[#ff5c74]/10">
                     Logout
@@ -301,6 +370,33 @@ const EmptyState = ({ icon: Icon, title, message, action }: { icon: any, title: 
     {action}
   </div>
 );
+
+const NavigateReplacement = ({ to, state }: { to: string, state?: any }) => {
+  const navigate = useNavigate();
+  useEffect(() => {
+    navigate(to, { replace: true, state });
+  }, [navigate, state, to]);
+  return null;
+};
+
+const Unauthorized = () => (
+  <EmptyState
+    icon={ShieldCheck}
+    title="Unauthorized"
+    message="You do not have access to this page."
+    action={<Link to="/dashboard" className="btn-primary">Go to Dashboard</Link>}
+  />
+);
+
+const ProtectedRoute = ({ children, roles }: { children: ReactNode, roles?: string[] }) => {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) return <div className="mx-auto max-w-4xl px-4 py-8"><div className="glass-card h-64 animate-pulse" /></div>;
+  if (!user) return <NavigateReplacement to="/login" state={{ from: location.pathname }} />;
+  if (roles && !roles.includes(user.role)) return <Unauthorized />;
+  return <>{children}</>;
+};
 
 // ==================== PAGES ====================
 
@@ -463,20 +559,6 @@ const Home = () => {
           </div>
         </section>
 
-        <section className="mx-auto max-w-7xl px-5 py-10 sm:px-8 lg:px-12">
-          <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="mb-2 text-xs font-bold uppercase tracking-[0.24em] text-[#82b9ff]">Recent community reports</p>
-              <h2 className="editorial-heading text-3xl leading-tight text-white">Items needing follow-up.</h2>
-            </div>
-            <Link to="/items/lost" className="btn-secondary w-full sm:w-auto">View All</Link>
-          </div>
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-            <ItemCard item={{ title: 'Black Wallet', category: 'Wallet / Money', location: 'Zone Petchay', status: 'posted', created_at: new Date().toISOString() }} onClick={() => navigate('/items/1')} />
-            <ItemCard item={{ title: 'iPhone 14 Pro', category: 'Electronics', location: 'Zone Camote', status: 'matched', created_at: new Date().toISOString() }} onClick={() => navigate('/items/2')} />
-            <ItemCard item={{ title: 'House Keys', category: 'Keys', location: 'Zone Ubi', status: 'posted', created_at: new Date().toISOString() }} onClick={() => navigate('/items/3')} />
-          </div>
-        </section>
       </main>
     </div>
   );
@@ -519,7 +601,7 @@ const Login = () => {
         )}
 
         <button type="button" onClick={() => loginWithGoogle('/dashboard')} className="btn-secondary mb-5 w-full py-3">
-          <Mail className="h-5 w-5" />
+          <GoogleIcon />
           Continue with Gmail
         </button>
 
@@ -589,7 +671,7 @@ const SignUp = () => {
         )}
 
         <button type="button" onClick={() => loginWithGoogle('/dashboard')} className="btn-secondary mb-5 w-full py-3">
-          <Mail className="h-5 w-5" />
+          <GoogleIcon />
           Continue with Gmail
         </button>
 
@@ -701,7 +783,7 @@ const ItemsPage = ({ type }: { type: 'lost' | 'found' }) => {
   const loadItems = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ type, status: 'posted' });
+      const params = new URLSearchParams({ type });
       if (category) params.append('category', category);
       if (zone) params.append('zone', zone);
       const res = await apiCall(`/api/items?${params}`);
@@ -857,6 +939,8 @@ const ItemDetailPage = () => {
 const PostItemPage = () => {
   const [type, setType] = useState<'lost' | 'found'>('lost');
   const [form, setForm] = useState({ title: '', description: '', category: '', location: '', zone: '', date_lost: '', date_found: '', contact_preference: 'message', finder_name: '', finder_contact: '', turnover_to_barangay: false });
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -865,13 +949,47 @@ const PostItemPage = () => {
     if (saved) setType(saved);
   }, []);
 
+  useEffect(() => {
+    if (!selectedImage) {
+      setImagePreview('');
+      return;
+    }
+
+    const nextPreview = URL.createObjectURL(selectedImage);
+    setImagePreview(nextPreview);
+    return () => URL.revokeObjectURL(nextPreview);
+  }, [selectedImage]);
+
+  const handleImageChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    if (!file) {
+      setSelectedImage(null);
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      alert('Please choose an image file.');
+      e.target.value = '';
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Image must be 5MB or smaller.');
+      e.target.value = '';
+      return;
+    }
+
+    setSelectedImage(file);
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
+      const imageUrl = selectedImage ? await uploadImage(selectedImage) : undefined;
       await apiCall('/api/items', {
         method: 'POST',
-        body: JSON.stringify({ ...form, type })
+        body: JSON.stringify({ ...form, type, image_url: imageUrl })
       });
       navigate('/dashboard');
     } catch (err: any) {
@@ -956,6 +1074,27 @@ const PostItemPage = () => {
             </>
           )}
 
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-300">Item Photo</label>
+            <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-white/20 bg-[#0a1022]/90 px-4 py-6 text-center transition hover:border-[#4f8cff]/70 hover:bg-[#0d1730]">
+              <ImagePlus className="mb-3 h-8 w-8 text-[#82b9ff]" />
+              <span className="text-sm font-semibold text-white">Upload a photo</span>
+              <span className="mt-1 text-xs text-slate-400">JPG, PNG, or WebP up to 5MB</span>
+              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageChange} className="sr-only" />
+            </label>
+            {imagePreview && (
+              <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-[#070b1a]">
+                <img src={imagePreview} alt="Selected item preview" className="h-56 w-full object-cover" />
+                <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs text-slate-300">
+                  <span className="min-w-0 truncate">{selectedImage?.name}</span>
+                  <button type="button" onClick={() => setSelectedImage(null)} className="rounded-md px-2 py-1 font-semibold text-[#ffa2ae] transition hover:bg-[#ff5c74]/10">
+                    Remove
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <button type="submit" disabled={loading} className="btn-primary w-full py-3">
             {loading ? 'Submitting...' : 'Submit Report'}
           </button>
@@ -969,6 +1108,8 @@ const ClaimSubmitPage = () => {
   const { itemId } = useParams();
   const [item, setItem] = useState<any>(null);
   const [form, setForm] = useState({ message: '', proof_type: 'photo' });
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreview, setProofPreview] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -976,13 +1117,43 @@ const ClaimSubmitPage = () => {
     if (itemId) apiCall(`/api/items/${itemId}`).then(setItem).catch(() => {});
   }, [itemId]);
 
+  useEffect(() => {
+    if (!proofFile || !proofFile.type.startsWith('image/')) {
+      setProofPreview('');
+      return;
+    }
+    const nextPreview = URL.createObjectURL(proofFile);
+    setProofPreview(nextPreview);
+    return () => URL.revokeObjectURL(nextPreview);
+  }, [proofFile]);
+
+  const handleProofChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    if (!file) {
+      setProofFile(null);
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      alert('Please upload an image proof file.');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Proof image must be 5MB or smaller.');
+      e.target.value = '';
+      return;
+    }
+    setProofFile(file);
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
+      const proofUrl = proofFile ? await uploadImage(proofFile) : undefined;
       await apiCall('/api/claims', {
         method: 'POST',
-        body: JSON.stringify({ item_id: itemId, ...form })
+        body: JSON.stringify({ item_id: itemId, ...form, proof_url: proofUrl })
       });
       navigate('/dashboard');
     } catch (err: any) {
@@ -1017,6 +1188,21 @@ const ClaimSubmitPage = () => {
               <option value="id">ID Card</option>
               <option value="other">Other</option>
             </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-300">Proof Photo *</label>
+            <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-white/20 bg-[#0a1022]/90 px-4 py-6 text-center transition hover:border-[#4f8cff]/70">
+              <ImagePlus className="mb-3 h-8 w-8 text-[#82b9ff]" />
+              <span className="text-sm font-semibold text-white">Upload proof</span>
+              <span className="mt-1 text-xs text-slate-400">Receipt, item photo, or identifying mark</span>
+              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleProofChange} className="sr-only" required />
+            </label>
+            {proofPreview && (
+              <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-[#070b1a]">
+                <img src={proofPreview} alt="Proof preview" className="h-48 w-full object-cover" />
+              </div>
+            )}
           </div>
 
           <button type="submit" disabled={loading} className="btn-primary w-full py-3">
@@ -1177,10 +1363,10 @@ const AdminDashboard = () => {
             <h1 className="editorial-heading mt-2 text-4xl leading-tight">Admin Dashboard</h1>
             <p className="mt-2 max-w-xl text-sm leading-7 text-slate-400">System overview, report queues, and claim activity.</p>
           </div>
-          <button className="btn-primary w-full md:w-auto">
+          <Link to="/reports" className="btn-primary w-full md:w-auto">
             <Download className="h-4 w-4" />
             Generate Report
-          </button>
+          </Link>
         </div>
       </div>
 
@@ -1232,6 +1418,381 @@ const AdminDashboard = () => {
             ))}
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+const AdminReportsPage = () => {
+  const [items, setItems] = useState<any[]>([]);
+  const [status, setStatus] = useState('pending');
+  const [loading, setLoading] = useState(true);
+
+  const loadReports = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (status !== 'all') params.set('status', status);
+      const res = await apiCall(`/api/items?${params.toString()}`);
+      setItems(res.items || []);
+    } catch (err: any) {
+      alert(err.message || 'Could not load reports');
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadReports();
+  }, [status]);
+
+  const updateStatus = async (item: any, nextStatus: string) => {
+    const admin_remarks = nextStatus === 'rejected' ? window.prompt('Reason for rejection?') : '';
+    if (nextStatus === 'rejected' && !admin_remarks) return;
+    await apiCall(`/api/items/${item.id}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: nextStatus, admin_remarks })
+    });
+    await loadReports();
+  };
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wider text-[#82b9ff]">Admin</p>
+          <h1 className="text-3xl font-bold text-white">Manage Reports</h1>
+          <p className="mt-1 text-slate-400">Approve, reject, archive, and review lost/found submissions.</p>
+        </div>
+        <select value={status} onChange={(e) => setStatus(e.target.value)} className="form-field sm:w-56">
+          <option value="pending">Pending</option>
+          <option value="posted">Posted</option>
+          <option value="matched">Matched</option>
+          <option value="claimed">Claimed</option>
+          <option value="returned">Returned</option>
+          <option value="rejected">Rejected</option>
+          <option value="all">All Active</option>
+        </select>
+      </div>
+
+      {loading ? (
+        <div className="glass-card h-72 animate-pulse" />
+      ) : items.length === 0 ? (
+        <EmptyState icon={FileText} title="No reports found" message="There are no reports in this queue." />
+      ) : (
+        <div className="space-y-4">
+          {items.map((item) => (
+            <div key={item.id} className="glass-card grid gap-4 p-4 lg:grid-cols-[120px_minmax(0,1fr)_auto] lg:items-center">
+              <div className="flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg bg-[#070b1a]">
+                {item.image_url ? <img src={item.image_url} alt={item.title} className="h-full w-full object-cover" /> : <Package className="h-8 w-8 text-slate-500" />}
+              </div>
+              <div className="min-w-0">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className={cn("rounded-full border px-2.5 py-1 text-xs font-bold uppercase", item.type === 'lost' ? 'border-[#ffb84d]/30 bg-[#ffb84d]/15 text-[#ffd08a]' : 'border-[#19d7b7]/30 bg-[#19d7b7]/15 text-[#75f7df]')}>{item.type}</span>
+                  <StatusBadge status={item.status} />
+                </div>
+                <h2 className="break-words text-lg font-bold text-white">{item.title}</h2>
+                <p className="mt-1 line-clamp-2 text-sm text-slate-400">{item.description}</p>
+                <p className="mt-2 text-xs text-slate-500">{item.category} • {item.zone || item.purok} • {item.location}</p>
+              </div>
+              <div className="flex flex-wrap gap-2 lg:justify-end">
+                <Link to={`/items/${item.id}`} className="btn-secondary px-3 py-2"><Eye className="h-4 w-4" />View</Link>
+                {item.status === 'pending' && <button onClick={() => updateStatus(item, 'posted')} className="btn-primary px-3 py-2"><CheckCircle className="h-4 w-4" />Approve</button>}
+                {item.status === 'pending' && <button onClick={() => updateStatus(item, 'rejected')} className="btn-secondary px-3 py-2 text-[#ffa2ae]"><XCircle className="h-4 w-4" />Reject</button>}
+                {item.status !== 'archived' && <button onClick={() => updateStatus(item, 'archived')} className="btn-secondary px-3 py-2">Archive</button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ClaimReviewPage = () => {
+  const [claims, setClaims] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadClaims = async () => {
+    setLoading(true);
+    try {
+      const res = await apiCall('/api/claims');
+      setClaims(res.claims || []);
+    } catch (err: any) {
+      alert(err.message || 'Could not load claims');
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadClaims();
+  }, []);
+
+  const decideClaim = async (claim: any, action: 'approve' | 'reject') => {
+    const remarks = action === 'reject' ? window.prompt('Reason for rejection?') : '';
+    if (action === 'reject' && !remarks) return;
+    await apiCall(`/api/claims/${claim.id}/${action}`, {
+      method: 'PUT',
+      body: JSON.stringify({ remarks })
+    });
+    await loadClaims();
+  };
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mb-6">
+        <p className="text-xs font-bold uppercase tracking-wider text-[#82b9ff]">Official workflow</p>
+        <h1 className="text-3xl font-bold text-white">Manage Claims</h1>
+        <p className="mt-1 text-slate-400">Review proof, approve valid claims, and generate QR slips.</p>
+      </div>
+      {loading ? (
+        <div className="glass-card h-72 animate-pulse" />
+      ) : claims.length === 0 ? (
+        <EmptyState icon={MessageSquare} title="No claims found" message="Submitted claims will appear here." />
+      ) : (
+        <div className="space-y-4">
+          {claims.map((claim) => (
+            <div key={claim.id} className="glass-card grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+              <div className="min-w-0">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <StatusBadge status={claim.status} />
+                  <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-xs font-semibold text-slate-300">{claim.item_type}</span>
+                </div>
+                <h2 className="break-words text-lg font-bold text-white">{claim.item_title}</h2>
+                <p className="mt-1 text-sm text-slate-400">Claimant: {claim.claimant_name || 'Unknown'}</p>
+                <p className="mt-1 line-clamp-2 text-sm text-slate-500">{claim.message}</p>
+                {claim.proof_url && <a href={claim.proof_url} target="_blank" className="mt-2 inline-flex text-sm font-semibold text-[#9dc4ff]">View proof</a>}
+              </div>
+              <div className="flex flex-wrap gap-2 lg:justify-end">
+                {(claim.status === 'pending' || claim.status === 'under_review') && <button onClick={() => decideClaim(claim, 'approve')} className="btn-primary px-3 py-2">Approve</button>}
+                {(claim.status === 'pending' || claim.status === 'under_review') && <button onClick={() => decideClaim(claim, 'reject')} className="btn-secondary px-3 py-2 text-[#ffa2ae]">Reject</button>}
+                {claim.status === 'approved' && <Link to={`/claims/${claim.id}/qr`} className="btn-secondary px-3 py-2"><QrCode className="h-4 w-4" />QR</Link>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const UsersPage = () => {
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadUsers = async () => {
+    setLoading(true);
+    try {
+      setUsers(await apiCall('/api/admin/users'));
+    } catch (err: any) {
+      alert(err.message || 'Could not load users');
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  const updateRole = async (id: number, role: string) => {
+    await apiCall(`/api/admin/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
+    await loadUsers();
+  };
+
+  const toggleStatus = async (user: any) => {
+    const action = user.status === 'suspended' ? 'reactivate' : 'suspend';
+    await apiCall(`/api/admin/users/${user.id}/${action}`, { method: 'PUT', body: JSON.stringify({}) });
+    await loadUsers();
+  };
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mb-6">
+        <p className="text-xs font-bold uppercase tracking-wider text-[#82b9ff]">Admin</p>
+        <h1 className="text-3xl font-bold text-white">Manage Users</h1>
+      </div>
+      {loading ? <div className="glass-card h-72 animate-pulse" /> : (
+        <div className="glass-card overflow-hidden">
+          <div className="divide-y divide-white/10">
+            {users.map((person) => (
+              <div key={person.id} className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_180px_auto] md:items-center">
+                <div className="min-w-0">
+                  <p className="font-bold text-white">{person.name}</p>
+                  <p className="break-all text-sm text-slate-400">{person.email}</p>
+                </div>
+                <select value={person.role} onChange={(e) => updateRole(person.id, e.target.value)} className="form-field">
+                  <option value="resident">Resident</option>
+                  <option value="official">Official</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <button onClick={() => toggleStatus(person)} className="btn-secondary px-3 py-2">
+                  {person.status === 'suspended' ? 'Reactivate' : 'Suspend'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const NotificationsPage = () => {
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadNotifications = async () => {
+    setLoading(true);
+    try {
+      setNotifications(await apiCall('/api/notifications'));
+    } catch (err: any) {
+      alert(err.message || 'Could not load notifications');
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadNotifications();
+  }, []);
+
+  const markAllRead = async () => {
+    await apiCall('/api/notifications/read-all', { method: 'PUT', body: JSON.stringify({}) });
+    await loadNotifications();
+  };
+
+  return (
+    <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mb-6 flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-white">Notifications</h1>
+          <p className="mt-1 text-slate-400">Report, claim, and system updates.</p>
+        </div>
+        <button onClick={markAllRead} className="btn-secondary px-3 py-2">Mark all read</button>
+      </div>
+      {loading ? <div className="glass-card h-72 animate-pulse" /> : notifications.length === 0 ? (
+        <EmptyState icon={Bell} title="No notifications" message="Updates will appear here." />
+      ) : (
+        <div className="space-y-3">
+          {notifications.map((notification) => (
+            <div key={notification.id} className={cn("rounded-lg border p-4", notification.is_read ? "border-white/10 bg-white/5" : "border-[#4f8cff]/30 bg-[#4f8cff]/10")}>
+              <p className="font-bold text-white">{notification.title}</p>
+              <p className="mt-1 text-sm text-slate-400">{notification.message}</p>
+              <p className="mt-2 text-xs text-slate-500">{new Date(notification.created_at).toLocaleString()}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ReportsPage = () => {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [report, setReport] = useState<any>(null);
+
+  const loadReport = async () => {
+    setReport(await apiCall(`/api/reports/monthly?month=${encodeURIComponent(month)}`));
+  };
+
+  useEffect(() => {
+    loadReport().catch(() => {});
+  }, [month]);
+
+  const downloadCsv = () => {
+    if (!report) return;
+    const rows = Object.entries(report).map(([key, value]) => `${key},${value}`).join('\n');
+    const url = URL.createObjectURL(new Blob([`Metric,Value\n${rows}`], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `paknaan-lostlink-${month}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wider text-[#82b9ff]">Reports</p>
+          <h1 className="text-3xl font-bold text-white">Monthly Summary</h1>
+        </div>
+        <div className="flex gap-2">
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="form-field" />
+          <button onClick={downloadCsv} className="btn-primary px-3 py-2"><Download className="h-4 w-4" />CSV</button>
+        </div>
+      </div>
+      {report && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Object.entries(report).map(([key, value]) => (
+            <div key={key} className="glass-card p-5">
+              <p className="text-sm capitalize text-slate-400">{key.replace(/([A-Z])/g, ' $1')}</p>
+              <p className="mt-2 text-3xl font-bold text-white">{String(value)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ProfilePage = () => {
+  const { user, completeGoogleLogin } = useAuth();
+  const [form, setForm] = useState({ name: user?.name || '', contact_number: '', address: '', zone: user?.zone || '', photo_url: user?.photo_url || '' });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    apiCall('/api/auth/me').then((data) => {
+      setForm({
+        name: data.name || '',
+        contact_number: data.contact_number || '',
+        address: data.address || '',
+        zone: data.zone || data.purok || '',
+        photo_url: data.photo_url || '',
+      });
+    }).catch(() => {});
+  }, []);
+
+  const saveProfile = async (e: FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const updated = await apiCall('/api/auth/profile', { method: 'PUT', body: JSON.stringify(form) });
+      const token = localStorage.getItem('token');
+      if (token) completeGoogleLogin(token, { ...user, ...updated.user });
+      alert('Profile updated');
+    } catch (err: any) {
+      alert(err.message || 'Could not update profile');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6 lg:px-8">
+      <div className="glass-card p-5 sm:p-8">
+        <h1 className="mb-6 text-2xl font-bold text-white">Profile</h1>
+        <form onSubmit={saveProfile} className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-300">Full Name</label>
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="form-field" required />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-300">Contact Number</label>
+              <input value={form.contact_number} onChange={(e) => setForm({ ...form, contact_number: e.target.value })} className="form-field" />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-300">Zone</label>
+              <select value={form.zone} onChange={(e) => setForm({ ...form, zone: e.target.value })} className="form-field">
+                <option value="">Select Zone</option>
+                {ZONES.map(z => <option key={z} value={z}>{z}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-300">Address</label>
+            <textarea value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className="form-field" rows={3} />
+          </div>
+          <button disabled={loading} className="btn-primary w-full py-3">{loading ? 'Saving...' : 'Save Profile'}</button>
+        </form>
       </div>
     </div>
   );
@@ -1305,10 +1866,17 @@ export default function App() {
           <Route path="/items/lost" element={<ItemsPage type="lost" />} />
           <Route path="/items/found" element={<ItemsPage type="found" />} />
           <Route path="/items/:id" element={<ItemDetailPage />} />
-          <Route path="/post" element={<PostItemPage />} />
-          <Route path="/claims/:itemId/submit" element={<ClaimSubmitPage />} />
-          <Route path="/claims/:id/qr" element={<ClaimQRPage />} />
-          <Route path="/dashboard" element={user?.role === 'admin' ? <AdminDashboard /> : <Dashboard />} />
+          <Route path="/post" element={<ProtectedRoute><PostItemPage /></ProtectedRoute>} />
+          <Route path="/claims/:itemId/submit" element={<ProtectedRoute><ClaimSubmitPage /></ProtectedRoute>} />
+          <Route path="/claims/:id/qr" element={<ProtectedRoute><ClaimQRPage /></ProtectedRoute>} />
+          <Route path="/dashboard" element={<ProtectedRoute>{user?.role === 'admin' ? <AdminDashboard /> : <Dashboard />}</ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+          <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
+          <Route path="/admin/reports" element={<ProtectedRoute roles={['admin', 'official']}><AdminReportsPage /></ProtectedRoute>} />
+          <Route path="/admin/claims" element={<ProtectedRoute roles={['admin', 'official']}><ClaimReviewPage /></ProtectedRoute>} />
+          <Route path="/admin/users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />
+          <Route path="/reports" element={<ProtectedRoute roles={['admin', 'official']}><ReportsPage /></ProtectedRoute>} />
+          <Route path="/unauthorized" element={<Unauthorized />} />
         </Routes>
       </div>
     </Router>
