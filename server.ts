@@ -404,6 +404,12 @@ async function ensureVectorColumns() {
   }
 }
 
+async function ensureImageMatchingColumns() {
+  await ensureColumn('items', 'visual_description', 'TEXT');
+  await ensureColumn('items', 'embedding_json', 'TEXT');
+  await ensureVectorColumns();
+}
+
 async function repairDemoAccounts() {
   const demoAdminEmail = 'admin@paknaan.gov'.toLowerCase();
   const adminExists = await db.all('SELECT * FROM users WHERE email = ?', [demoAdminEmail]);
@@ -493,6 +499,7 @@ async function initDb() {
 
   const schemaVersion = await db.get('SELECT value FROM app_metadata WHERE key = ?', ['schema_version']);
   if (schemaVersion?.value === SCHEMA_VERSION) {
+    await ensureImageMatchingColumns();
     await repairDemoAccounts();
     return;
   }
@@ -677,10 +684,8 @@ async function initDb() {
   await ensureColumn('items', 'barangay_received_by', 'TEXT');
   await ensureColumn('items', 'storage_location', 'TEXT');
   await ensureColumn('items', 'admin_remarks', 'TEXT');
-  await ensureColumn('items', 'visual_description', 'TEXT');
-  await ensureColumn('items', 'embedding_json', 'TEXT');
+  await ensureImageMatchingColumns();
   await ensureColumn('items', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
-  await ensureVectorColumns();
 
   await ensureColumn('claims', 'message', 'TEXT');
   await ensureColumn('claims', 'proof_type', 'TEXT');
@@ -1019,6 +1024,7 @@ async function startServer() {
 
   const uploadItemHandler = async (req: any, res: any) => {
     try {
+      await ensureImageMatchingColumns();
       const { title, description, location } = req.body;
       if (!req.file) return res.status(400).json({ error: 'Image file is required' });
       if (!title || !description || !location) {
@@ -1066,6 +1072,7 @@ async function startServer() {
 
   const searchItemHandler = async (req: any, res: any) => {
     try {
+      await ensureImageMatchingColumns();
       if (!req.file) return res.status(400).json({ error: 'Image file is required' });
 
       const imageUrl = await uploadImageFile(req.file);
