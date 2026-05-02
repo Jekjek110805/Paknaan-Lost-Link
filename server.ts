@@ -470,9 +470,10 @@ async function startServer() {
   app.use(async (req, res, next) => {
     if (!dbInitialized) await dbInitPromise;
     if (dbInitError && req.path.startsWith('/api') && req.path !== '/api/constants') {
+      const detail = dbInitError instanceof Error ? dbInitError.message : String(dbInitError);
       return res.status(503).json({
         error: 'Database unavailable',
-        details: 'Check DATABASE_URL and make sure the database server is running.'
+        details: detail || 'Check DATABASE_URL and make sure the database server is running.'
       });
     }
     next();
