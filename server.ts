@@ -139,6 +139,14 @@ const ZONES = [
 ];
 
 const app = express();
+const asyncRouteMethods = ['get', 'post', 'put', 'delete', 'patch'] as const;
+for (const method of asyncRouteMethods) {
+  const original = app[method].bind(app) as any;
+  (app as any)[method] = (path: any, ...handlers: any[]) => original(path, ...handlers.map((handler) => {
+    if (typeof handler !== 'function' || handler.length >= 4) return handler;
+    return (req: any, res: any, next: any) => Promise.resolve(handler(req, res, next)).catch(next);
+  }));
+}
 app.use(cors());
 app.use(express.json());
 
@@ -678,27 +686,6 @@ async function updateItemImageHash(itemId: any, imageHash: string) {
   );
 }
 
-async function getItemSearchEmbedding(item: any) {
-  if (item.embedding_json) {
-    try {
-      const parsed = JSON.parse(item.embedding_json);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed as number[];
-    } catch {
-      // Rebuild below when the stored JSON is invalid.
-    }
-  }
-
-  const context = `Known item details: title="${item.title || ''}", type="${item.type || ''}", category="${item.category || ''}", description="${item.description || ''}", location="${item.location || ''}".`;
-  const imageDescription = item.image_url && /^https?:\/\//i.test(item.image_url)
-    ? await describeImageWithGeminiUrl(item.image_url, context).catch(() => null)
-    : null;
-  const visualDescription = imageDescription || item.visual_description || context;
-  const searchableText = [item.title, item.description, item.category, item.location, visualDescription].filter(Boolean).join('\n');
-  const embedding = await createEmbedding(searchableText);
-  await updateItemEmbedding(item.id, visualDescription, embedding);
-  return embedding;
-}
-
 function getStoredClipEmbedding(item: any) {
   if (!item?.clip_embedding_json) return null;
   try {
@@ -1209,6 +1196,14 @@ async function startServer() {
   });
 
   // ==================== AUTH ROUTES ====================
+
+  app.get('/api/health', (_req, res) => {
+    res.status(200).json({
+      ok: true,
+      database: dbInitError ? 'unavailable' : (USE_POSTGRES ? 'postgres' : 'sqlite'),
+      timestamp: new Date().toISOString(),
+    });
+  });
 
   app.post('/api/auth/register', async (req, res) => {
     let { name, email, password, contact_number, zone, facebook_url } = req.body;
@@ -2027,6 +2022,26 @@ async function startServer() {
     res.json(logs);
   });
 
+  app.post('/api/admin/reindex-visual', authenticateToken, verifyRole(['admin']), async (req, res) => {
+    const requestedLimit = Number(req.query.limit || req.body?.limit || 25);
+    const limit = Math.min(100, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 25));
+    const items = await db.all(`
+      SELECT id FROM items
+      WHERE status NOT IN ('rejected', 'archived')
+        AND (visual_description IS NULL OR embedding_json IS NULL OR image_hash IS NULL OR clip_embedding_json IS NULL)
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT ?
+    `, [limit]);
+
+    let processed = 0;
+    for (const item of items) {
+      await indexItemForVisualSearch(item.id);
+      processed++;
+    }
+
+    res.json({ message: 'Visual index refresh completed', processed, requested: limit });
+  });
+
   app.get('/api/admin/users', authenticateToken, verifyRole(['admin']), async (req, res) => {
     const { search, role, page = 1, limit = 20 } = req.query;
     let query = 'SELECT id, name, email, role, purok as zone, verified_at, status, created_at FROM users WHERE 1=1';
@@ -2147,6 +2162,10 @@ async function startServer() {
     res.json({ categories: CATEGORIES, zones: ZONES });
   });
 
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl}` });
+  });
+
   // ==================== FRONTEND HANDLING ====================
 
   // Only run Vite development server if we are local and not in production mode
@@ -2173,6 +2192,22 @@ async function startServer() {
     // This server instance will primarily serve API routes.
     // No explicit static serving or catch-all route needed here for Vercel.
   }
+
+  app.use((err: any, req: any, res: any, _next: any) => {
+    const status = err?.status || err?.statusCode || 500;
+    const message = err?.message || 'Internal server error';
+    console.error('Request failed:', {
+      method: req.method,
+      url: req.originalUrl,
+      status,
+      message,
+    });
+    if (res.headersSent) return;
+    res.status(status).json({
+      error: status >= 500 ? 'Internal server error' : message,
+      details: process.env.NODE_ENV === 'production' && status >= 500 ? undefined : message,
+    });
+  });
 
   // Local development listener
   if (!IS_VERCEL) {
