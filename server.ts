@@ -173,6 +173,22 @@ const cosineSimilarity = (a: number[], b: number[]) => {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 };
 
+const createLocalEmbedding = (text: string, dimensions = 1536) => {
+  const vector = new Array(dimensions).fill(0);
+  const tokens = text.toLowerCase().match(/[a-z0-9]+/g) || ['unknown'];
+  for (const token of tokens) {
+    let hash = 2166136261;
+    for (let i = 0; i < token.length; i++) {
+      hash ^= token.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    const index = Math.abs(hash) % dimensions;
+    vector[index] += 1;
+  }
+  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
+  return vector.map(value => value / norm);
+};
+
 const getUploadedFileUrl = (file?: any) => {
   if (!file) return null;
   const filename = file.filename || `${Date.now()}-${file.originalname}`;
@@ -204,11 +220,27 @@ async function uploadImageFile(file: any) {
   return data.secure_url as string;
 }
 
-async function describeImage(imageUrl: string, context = '') {
+async function describeImage(imageUrl: string, context = '', file?: any) {
   if (!OPENAI_API_KEY) {
-    const fallback = context.trim();
-    if (fallback) return fallback;
-    throw new Error('OPENAI_API_KEY is required for image matching.');
+    if (geminiApiKey && file?.buffer && file?.mimetype) {
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [
+          {
+            inlineData: {
+              mimeType: file.mimetype,
+              data: file.buffer.toString('base64'),
+            },
+          },
+          `Describe this lost-and-found item for visual search. Focus on object type, colors, brand text, shape, materials, visible labels, damage, and distinctive details. Return one compact searchable paragraph. ${context}`,
+        ],
+      });
+      if (response.text) return response.text.trim();
+    }
+
+    return context.trim() || 'Uploaded item photo for visual matching.';
   }
 
   const response = await fetch('https://api.openai.com/v1/responses', {
@@ -244,7 +276,7 @@ async function describeImage(imageUrl: string, context = '') {
 
 async function createEmbedding(text: string) {
   if (!OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is required for image matching.');
+    return createLocalEmbedding(text);
   }
 
   const response = await fetch('https://api.openai.com/v1/embeddings', {
@@ -972,7 +1004,8 @@ async function startServer() {
       const imageUrl = await uploadImageFile(req.file);
       const visualDescription = await describeImage(
         imageUrl,
-        `Known item details: title="${title}", description="${description}", location="${location}".`
+        `Known item details: title="${title}", description="${description}", location="${location}".`,
+        req.file
       );
       const searchableText = [title, description, location, visualDescription].filter(Boolean).join('\n');
       const embedding = await createEmbedding(searchableText);
@@ -1012,7 +1045,7 @@ async function startServer() {
       if (!req.file) return res.status(400).json({ error: 'Image file is required' });
 
       const imageUrl = await uploadImageFile(req.file);
-      const visualDescription = await describeImage(imageUrl);
+      const visualDescription = await describeImage(imageUrl, '', req.file);
       const embedding = await createEmbedding(visualDescription);
       let matches: any[] = [];
 
