@@ -18,6 +18,11 @@ const __dirname = path.dirname(__filename);
 const IS_VERCEL = process.env.VERCEL === '1';
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'paknaan-secret-key-change-in-production';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
+const OPENAI_EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME;
+const CLOUDINARY_UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || process.env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
 const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 const DATABASE_PATH = process.env.DATABASE_PATH || './database.sqlite';
@@ -31,6 +36,7 @@ const DEMO_OFFICIAL_PASSWORD = process.env.DEMO_OFFICIAL_PASSWORD || DEFAULT_DEM
 
 let pool: any = null;
 let db: any = null;
+let pgVectorReady = false;
 
 if (USE_POSTGRES) {
   pool = new pg.Pool({
@@ -152,6 +158,21 @@ const optionalValue = (value: any) => {
   return value;
 };
 
+const vectorToSql = (embedding: number[]) => `[${embedding.join(',')}]`;
+
+const cosineSimilarity = (a: number[], b: number[]) => {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  if (!normA || !normB) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+};
+
 const getUploadedFileUrl = (file?: any) => {
   if (!file) return null;
   const filename = file.filename || `${Date.now()}-${file.originalname}`;
@@ -159,6 +180,107 @@ const getUploadedFileUrl = (file?: any) => {
     ? `data:${file.mimetype};base64,${file.buffer.toString('base64')}`
     : `/uploads/${filename}`;
 };
+
+async function uploadImageFile(file: any) {
+  if (!file) return null;
+  if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_UPLOAD_PRESET) {
+    return getUploadedFileUrl(file);
+  }
+
+  const formData = new FormData();
+  const blob = new Blob([file.buffer], { type: file.mimetype });
+  formData.append('file', blob, file.originalname || 'item.jpg');
+  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  formData.append('folder', 'paknaan-lostlink/items');
+
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  const data: any = await response.json().catch(() => ({}));
+  if (!response.ok || !data.secure_url) {
+    throw new Error(data.error?.message || 'Cloudinary upload failed');
+  }
+  return data.secure_url as string;
+}
+
+async function describeImage(imageUrl: string, context = '') {
+  if (!OPENAI_API_KEY) {
+    const fallback = context.trim();
+    if (fallback) return fallback;
+    throw new Error('OPENAI_API_KEY is required for image matching.');
+  }
+
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_VISION_MODEL,
+      input: [{
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: `Describe this lost-and-found item for visual search. Focus on object type, colors, brand text, shape, materials, visible labels, damage, and distinctive details. Return one compact searchable paragraph. ${context}`,
+          },
+          { type: 'input_image', image_url: imageUrl },
+        ],
+      }],
+    }),
+  });
+
+  const data: any = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error?.message || 'OpenAI vision request failed');
+  }
+  const outputText = data.output_text
+    || data.output?.flatMap((item: any) => item.content || []).map((part: any) => part.text).filter(Boolean).join(' ');
+  if (!outputText) throw new Error('OpenAI did not return an image description.');
+  return String(outputText).trim();
+}
+
+async function createEmbedding(text: string) {
+  if (!OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is required for image matching.');
+  }
+
+  const response = await fetch('https://api.openai.com/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_EMBEDDING_MODEL,
+      input: text,
+    }),
+  });
+
+  const data: any = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error?.message || 'OpenAI embedding request failed');
+  }
+  const embedding = data.data?.[0]?.embedding;
+  if (!Array.isArray(embedding)) throw new Error('OpenAI did not return an embedding.');
+  return embedding as number[];
+}
+
+async function updateItemEmbedding(itemId: any, description: string, embedding: number[]) {
+  await db.run(
+    'UPDATE items SET visual_description = ?, embedding_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [description, JSON.stringify(embedding), itemId]
+  );
+
+  if (db.type === 'postgres' && pgVectorReady) {
+    await db.run(
+      'UPDATE items SET embedding_vector = ?::vector, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [vectorToSql(embedding), itemId]
+    );
+  }
+}
 
 function createPostgresDb() {
   return {
@@ -211,6 +333,19 @@ async function ensureColumn(table: string, column: string, definition: string) {
     .replace(/\bBOOLEAN\b/gi, 'INTEGER')
     .replace(/\s+DEFAULT\s+CURRENT_TIMESTAMP/gi, '');
   await db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${sqliteDefinition}`);
+}
+
+async function ensureVectorColumns() {
+  if (db.type !== 'postgres') return;
+  try {
+    await pool.query('CREATE EXTENSION IF NOT EXISTS vector');
+    await pool.query('ALTER TABLE items ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)');
+    await pool.query('CREATE INDEX IF NOT EXISTS items_embedding_vector_idx ON items USING ivfflat (embedding_vector vector_cosine_ops) WITH (lists = 100)');
+    pgVectorReady = true;
+  } catch (error: any) {
+    pgVectorReady = false;
+    console.warn('pgvector is unavailable. Falling back to JSON similarity search:', error?.message || error);
+  }
 }
 
 async function repairDemoAccounts() {
@@ -486,7 +621,10 @@ async function initDb() {
   await ensureColumn('items', 'barangay_received_by', 'TEXT');
   await ensureColumn('items', 'storage_location', 'TEXT');
   await ensureColumn('items', 'admin_remarks', 'TEXT');
+  await ensureColumn('items', 'visual_description', 'TEXT');
+  await ensureColumn('items', 'embedding_json', 'TEXT');
   await ensureColumn('items', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+  await ensureVectorColumns();
 
   await ensureColumn('claims', 'message', 'TEXT');
   await ensureColumn('claims', 'proof_type', 'TEXT');
@@ -822,6 +960,112 @@ async function startServer() {
     await logActivity(req.user.id, 'delete_item', 'item', req.params.id, `Deleted item: ${item.title}`);
     res.json({ message: 'Item deleted successfully' });
   });
+
+  const uploadItemHandler = async (req: any, res: any) => {
+    try {
+      const { title, description, location } = req.body;
+      if (!req.file) return res.status(400).json({ error: 'Image file is required' });
+      if (!title || !description || !location) {
+        return res.status(400).json({ error: 'Title, description, and location are required' });
+      }
+
+      const imageUrl = await uploadImageFile(req.file);
+      const visualDescription = await describeImage(
+        imageUrl,
+        `Known item details: title="${title}", description="${description}", location="${location}".`
+      );
+      const searchableText = [title, description, location, visualDescription].filter(Boolean).join('\n');
+      const embedding = await createEmbedding(searchableText);
+
+      const result = await db.run(`
+        INSERT INTO items (title, description, type, category, location, purok, image_url, user_id, status, visual_description, embedding_json)
+        VALUES (?, ?, 'found', 'Others', ?, ?, ?, ?, 'posted', ?, ?)
+      `, [
+        title,
+        description,
+        location,
+        req.user?.purok || 'Outside Barangay Paknaan',
+        imageUrl,
+        req.user?.id || null,
+        visualDescription,
+        JSON.stringify(embedding),
+      ]);
+      await updateItemEmbedding(result.lastID, visualDescription, embedding);
+      await logActivity(req.user.id, 'create_image_match_item', 'item', result.lastID, `Created found item with image matching: ${title}`);
+
+      res.status(201).json({
+        id: result.lastID,
+        image_url: imageUrl,
+        title,
+        description,
+        location,
+        visual_description: visualDescription,
+      });
+    } catch (error: any) {
+      console.error('Image item upload failed:', error);
+      res.status(500).json({ error: error.message || 'Image item upload failed' });
+    }
+  };
+
+  const searchItemHandler = async (req: any, res: any) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'Image file is required' });
+
+      const imageUrl = await uploadImageFile(req.file);
+      const visualDescription = await describeImage(imageUrl);
+      const embedding = await createEmbedding(visualDescription);
+      let matches: any[] = [];
+
+      if (db.type === 'postgres' && pgVectorReady) {
+        matches = await db.all(`
+          SELECT id, title, description, location, image_url, visual_description,
+            1 - (embedding_vector <=> ?::vector) AS similarity_score
+          FROM items
+          WHERE type = 'found'
+            AND status IN ('posted', 'approved', 'matched')
+            AND embedding_vector IS NOT NULL
+          ORDER BY embedding_vector <=> ?::vector
+          LIMIT 5
+        `, [vectorToSql(embedding), vectorToSql(embedding)]);
+      } else {
+        const candidates = await db.all(`
+          SELECT id, title, description, location, image_url, visual_description, embedding_json
+          FROM items
+          WHERE type = 'found'
+            AND status IN ('posted', 'approved', 'matched')
+            AND embedding_json IS NOT NULL
+        `);
+        matches = candidates
+          .map((item: any) => {
+            let itemEmbedding: number[] = [];
+            try {
+              itemEmbedding = JSON.parse(item.embedding_json || '[]');
+            } catch {
+              itemEmbedding = [];
+            }
+            const { embedding_json, ...publicItem } = item;
+            return { ...publicItem, similarity_score: cosineSimilarity(embedding, itemEmbedding) };
+          })
+          .sort((a: any, b: any) => b.similarity_score - a.similarity_score)
+          .slice(0, 5);
+      }
+
+      res.json({
+        query_image_url: imageUrl,
+        query_description: visualDescription,
+        matches: matches.map((item: any) => ({
+          ...item,
+          similarity_score: Number(item.similarity_score || 0),
+        })),
+      });
+    } catch (error: any) {
+      console.error('Image item search failed:', error);
+      res.status(500).json({ error: error.message || 'Image item search failed' });
+    }
+  };
+
+  app.post(['/api/upload-item', '/upload-item'], authenticateToken, upload.single('image'), uploadItemHandler);
+  app.post(['/api/search-item', '/search-item'], authenticateToken, upload.single('image'), searchItemHandler);
 
   // ==================== CLAIM ROUTES ====================
 

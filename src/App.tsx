@@ -1,11 +1,11 @@
-import { useState, useEffect, createContext, useContext, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
+import { useState, useEffect, useRef, createContext, useContext, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate, useParams, Navigate } from 'react-router-dom';
 import { 
   Search, PlusCircle, User, Settings, MapPin, Calendar, Clock, ShieldCheck, 
   Bell, Menu, X, LayoutDashboard, LogOut, ChevronLeft, ChevronRight, TrendingUp, 
   Award, AlertCircle, CheckCircle, XCircle, Eye, Edit, Trash2, 
   EyeOff, QrCode, FileText, Download, Share2, Filter, ArrowLeft, Home as HomeIcon,
-  BarChart3, Users, Package, MessageSquare, Star, AlertTriangle, ImagePlus, Database, History
+  BarChart3, Users, Package, MessageSquare, Star, AlertTriangle, ImagePlus, Database, History, Camera, ScanSearch
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -270,6 +270,7 @@ const Sidebar = ({
     { name: 'Lost Items', path: '/items/lost', icon: Search },
     { name: 'Found Items', path: '/items/found', icon: Package },
     { name: 'Report Item', path: '/post', icon: PlusCircle },
+    { name: 'Image Match', path: '/image-match', icon: ScanSearch },
   ];
 
   const adminLinks = [
@@ -2228,6 +2229,210 @@ const ClaimQRPage = () => {
   );
 };
 
+const ImageMatchPage = () => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [capturedFile, setCapturedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [matches, setMatches] = useState<any[]>([]);
+  const [queryDescription, setQueryDescription] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState({ title: '', description: '', location: '' });
+
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach(track => track.stop());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!capturedFile) {
+      setPreviewUrl('');
+      return;
+    }
+    const url = URL.createObjectURL(capturedFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [capturedFile]);
+
+  const startCamera = async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false,
+    });
+    streamRef.current = stream;
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+    }
+    setCameraActive(true);
+  };
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
+    setCameraActive(false);
+  };
+
+  const capturePhoto = async () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+    if (!blob) return;
+    setCapturedFile(new File([blob], `found-item-${Date.now()}.jpg`, { type: 'image/jpeg' }));
+  };
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Please choose an image file.');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Image must be 5MB or smaller.');
+      e.target.value = '';
+      return;
+    }
+    setCapturedFile(file);
+  };
+
+  const searchMatches = async () => {
+    if (!capturedFile) return alert('Capture or upload a photo first.');
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('image', await compressImage(capturedFile));
+      const data = await apiFormCall('/api/search-item', formData);
+      setMatches(data.matches || []);
+      setQueryDescription(data.query_description || '');
+    } catch (err: any) {
+      alert(err.message || 'Image search failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const uploadFoundItem = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!capturedFile) return alert('Capture or upload a photo first.');
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('image', await compressImage(capturedFile));
+      Object.entries(form).forEach(([key, value]) => formData.append(key, String(value)));
+      await apiFormCall('/api/upload-item', formData);
+      setForm({ title: '', description: '', location: '' });
+      await searchMatches();
+      alert('Found item saved for image matching.');
+    } catch (err: any) {
+      alert(err.message || 'Could not save found item');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wider text-[#82b9ff]">Image Match</p>
+          <h1 className="text-3xl font-bold text-white">Camera Item Matching</h1>
+          <p className="mt-1 text-slate-400">Capture an item photo and compare it with found-item storage.</p>
+        </div>
+        <div className="flex gap-2">
+          <button type="button" onClick={cameraActive ? stopCamera : startCamera} className="btn-secondary px-4 py-2">
+            <Camera className="h-4 w-4" />
+            <span>{cameraActive ? 'Stop' : 'Camera'}</span>
+          </button>
+          <label className="btn-secondary cursor-pointer px-4 py-2">
+            <ImagePlus className="h-4 w-4" />
+            <span>Upload</span>
+            <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleFileChange} className="sr-only" />
+          </label>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+        <div className="glass-card overflow-hidden">
+          <div className="relative flex aspect-[4/3] items-center justify-center bg-[#070b1a]">
+            {previewUrl ? (
+              <img src={previewUrl} alt="Captured item" className="h-full w-full object-cover" />
+            ) : (
+              <video ref={videoRef} playsInline muted className={cn("h-full w-full object-cover", !cameraActive && "hidden")} />
+            )}
+            {!previewUrl && !cameraActive && <Package className="h-16 w-16 text-slate-500" />}
+            <canvas ref={canvasRef} className="hidden" />
+          </div>
+          <div className="flex flex-wrap gap-3 border-t border-white/10 p-4">
+            <button type="button" onClick={capturePhoto} disabled={!cameraActive || loading} className="btn-primary px-4 py-2">
+              <Camera className="h-4 w-4" />
+              <span>Capture</span>
+            </button>
+            <button type="button" onClick={() => { setCapturedFile(null); setMatches([]); setQueryDescription(''); }} disabled={loading} className="btn-secondary px-4 py-2">Clear</button>
+            <button type="button" onClick={searchMatches} disabled={!capturedFile || loading} className="btn-primary ml-auto px-4 py-2">
+              <ScanSearch className="h-4 w-4" />
+              <span>{loading ? 'Matching...' : 'Find Matches'}</span>
+            </button>
+          </div>
+        </div>
+
+        <form onSubmit={uploadFoundItem} className="glass-card space-y-4 p-5">
+          <h2 className="text-xl font-bold text-white">Save Found Item</h2>
+          <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="form-field" placeholder="Title" required />
+          <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="form-field" rows={4} placeholder="Description" required />
+          <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className="form-field" placeholder="Location" required />
+          <button disabled={!capturedFile || loading} className="btn-primary w-full py-3">Save and Index</button>
+        </form>
+      </div>
+
+      {queryDescription && (
+        <div className="mt-6 rounded-lg border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
+          <span className="font-semibold text-white">Detected: </span>{queryDescription}
+        </div>
+      )}
+
+      <div className="mt-6">
+        <h2 className="mb-4 text-xl font-bold text-white">Closest Matches</h2>
+        {matches.length === 0 ? (
+          <EmptyState icon={ScanSearch} title="No matches yet" message="Capture a photo and run image matching." />
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {matches.map((item) => (
+              <Link key={item.id} to={`/items/${item.id}`} className="glass-card overflow-hidden transition hover:shadow-xl hover:shadow-[#1b8cff]/15">
+                <div className="aspect-[4/3] bg-[#070b1a]">
+                  <ItemImage item={item} className="h-full w-full object-cover" fallbackClassName="flex h-full w-full items-center justify-center text-slate-500" iconClassName="h-10 w-10" />
+                </div>
+                <div className="space-y-2 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <h3 className="min-w-0 truncate font-semibold text-white">{item.title}</h3>
+                    <span className="rounded-full border border-[#19d7b7]/30 bg-[#19d7b7]/15 px-2 py-1 text-xs font-bold text-[#75f7df]">
+                      {Math.round((item.similarity_score || 0) * 100)}%
+                    </span>
+                  </div>
+                  <p className="line-clamp-2 text-sm text-slate-400">{item.description}</p>
+                  <p className="text-xs text-slate-500">{item.location}</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ==================== APP ====================
 
 export default function App() {
@@ -2251,6 +2456,7 @@ export default function App() {
           <Route path="/items/found" element={<ItemsPage type="found" />} />
           <Route path="/items/:id" element={<ItemDetailPage />} />
           <Route path="/post" element={<ProtectedRoute><PostItemPage /></ProtectedRoute>} />
+          <Route path="/image-match" element={<ProtectedRoute><ImageMatchPage /></ProtectedRoute>} />
           <Route path="/claims/:itemId/submit" element={<ProtectedRoute><ClaimSubmitPage /></ProtectedRoute>} />
           <Route path="/claims/:id/qr" element={<ProtectedRoute><ClaimQRPage /></ProtectedRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute>{user?.role === 'resident' ? <Dashboard /> : <AdminDashboard />}</ProtectedRoute>} />
