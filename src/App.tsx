@@ -423,18 +423,38 @@ const StatusBadge = ({ status }: { status: string }) => (
   </span>
 );
 
+const ItemImage = ({ item, className, fallbackClassName = 'relative flex h-16 w-16 items-center justify-center rounded-lg bg-white/10 text-[#9dc4ff] ring-1 ring-white/15', iconClassName = 'h-8 w-8 transition group-hover:text-white' }: { item: any; className?: string; fallbackClassName?: string; iconClassName?: string }) => {
+  const [failed, setFailed] = useState(false);
+  const imageUrl = item?.image_url;
+
+  useEffect(() => {
+    setFailed(false);
+  }, [imageUrl]);
+
+  if (!imageUrl || failed) {
+    return (
+      <div className={fallbackClassName}>
+        <Package className={iconClassName} />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={imageUrl}
+      alt={item.title}
+      className={className || 'relative h-full w-full object-cover'}
+      onError={() => setFailed(true)}
+    />
+  );
+};
+
 const ItemCard = ({ item, onClick }: { item: any, onClick?: () => void }) => (
   <motion.div whileHover={{ y: -3 }} className="glass-card group flex h-full cursor-pointer flex-col overflow-hidden transition-shadow hover:shadow-xl hover:shadow-[#1b8cff]/15" onClick={onClick}>
     <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-[#070b1a]">
       <div className="absolute left-0 top-8 h-3 w-1/2 bg-[#1b8cff]/70" />
       <div className="absolute bottom-10 right-0 h-3 w-2/3 bg-[#ff5c74]/70" />
-      {item.image_url ? (
-        <img src={item.image_url} alt={item.title} className="relative h-full w-full object-cover" />
-      ) : (
-        <div className="relative flex h-16 w-16 items-center justify-center rounded-lg bg-white/10 text-[#9dc4ff] ring-1 ring-white/15">
-          <Package className="h-8 w-8 transition group-hover:text-white" />
-        </div>
-      )}
+      <ItemImage item={item} />
     </div>
     <div className="flex flex-1 flex-col gap-3 p-4">
       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -938,11 +958,12 @@ const ItemDetailPage = () => {
 
       <div className="glass-card overflow-hidden">
         <div className="flex aspect-[16/9] max-h-[360px] items-center justify-center bg-[#070b1a]">
-          {item.image_url ? (
-            <img src={item.image_url} alt={item.title} className="w-full h-full object-cover" />
-          ) : (
-            <Package className="h-20 w-20 text-slate-500" />
-          )}
+          <ItemImage
+            item={item}
+            className="h-full w-full object-cover"
+            fallbackClassName="flex h-full w-full items-center justify-center text-slate-500"
+            iconClassName="h-20 w-20"
+          />
         </div>
         
         <div className="p-5 sm:p-8">
@@ -1704,7 +1725,12 @@ const AdminReportsPage = () => {
           {items.map((item) => (
             <div key={item.id} className="glass-card grid gap-4 p-4 lg:grid-cols-[120px_minmax(0,1fr)_auto] lg:items-center">
               <div className="flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg bg-[#070b1a]">
-                {item.image_url ? <img src={item.image_url} alt={item.title} className="h-full w-full object-cover" /> : <Package className="h-8 w-8 text-slate-500" />}
+                <ItemImage
+                  item={item}
+                  className="h-full w-full object-cover"
+                  fallbackClassName="flex h-full w-full items-center justify-center text-slate-500"
+                  iconClassName="h-8 w-8"
+                />
               </div>
               <div className="min-w-0">
                 <div className="mb-2 flex flex-wrap items-center gap-2">

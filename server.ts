@@ -1258,8 +1258,11 @@ async function startServer() {
       return res.status(400).json({ error: 'No file uploaded' });
     }
     const filename = req.file.filename || `${Date.now()}-${req.file.originalname}`;
+    const url = IS_VERCEL
+      ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
+      : `/uploads/${filename}`;
     res.json({ 
-      url: `/uploads/${filename}`,
+      url,
       filename: filename
     });
   });
@@ -1268,11 +1271,15 @@ async function startServer() {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
+    const filename = req.file.filename || `${Date.now()}-${req.file.originalname}`;
+    const url = IS_VERCEL
+      ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
+      : `/uploads/${filename}`;
     await db.run('UPDATE users SET photo_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
-      [`/uploads/${req.file.filename}`, req.user.id]);
+      [url, req.user.id]);
     res.json({ 
-      url: `/uploads/${req.file.filename}`,
-      filename: req.file.filename
+      url,
+      filename
     });
   });
 
