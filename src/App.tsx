@@ -51,7 +51,7 @@ async function apiCall(endpoint: string, options: any = {}) {
   
   const res = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
   const data = await parseApiResponse(res);
-  if (!res.ok) throw new Error(data.error || 'Request failed');
+  if (!res.ok) throw new Error(data.error || data.message || data.details || `Request failed (${res.status})`);
   return data;
 }
 
@@ -66,7 +66,7 @@ async function uploadImage(file: File) {
     body: formData,
   });
   const data = await parseApiResponse(res);
-  if (!res.ok) throw new Error(data.error || 'Image upload failed');
+  if (!res.ok) throw new Error(data.error || data.message || data.details || `Image upload failed (${res.status})`);
   return data.url as string;
 }
 
