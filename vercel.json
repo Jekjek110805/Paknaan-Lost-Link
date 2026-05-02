@@ -3,19 +3,12 @@
   "functions": {
     "api/index.ts": {
       "includeFiles": "server.ts"
-    },
-    "api/debug-server.ts": {
-      "includeFiles": "server.ts"
     }
   },
   "rewrites": [
     {
       "source": "/api/health",
       "destination": "/api/health.ts"
-    },
-    {
-      "source": "/api/debug-server",
-      "destination": "/api/debug-server.ts"
     },
     {
       "source": "/api/(.*)",
