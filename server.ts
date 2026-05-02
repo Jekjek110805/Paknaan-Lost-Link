@@ -7,7 +7,6 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
 import crypto from 'crypto';
-import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from 'dotenv';
 
 dotenv.config({ path: '.env.local', quiet: true });
@@ -49,7 +48,6 @@ const getAppUrl = () => {
   return url.replace(/\/+$/, '');
 };
 const geminiApiKey = process.env.GEMINI_API_KEY;
-const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
 
 // File upload configuration
 // Vercel filesystem is read-only. Use memoryStorage for serverless.
@@ -946,11 +944,13 @@ async function startServer() {
         Format: [{"id": 123, "score": 85}, {"id": 456, "score": 72}]
       `;
 
-      if (!ai) {
+      if (!geminiApiKey) {
         console.log('AI matching skipped: No Gemini API Key');
         return;
       }
 
+      const { GoogleGenAI, Type } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
       const response = await ai.models.generateContent({
         model: "gemini-2.0-flash",
         contents: prompt,
