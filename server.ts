@@ -23,6 +23,7 @@ const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 const DATABASE_PATH = process.env.DATABASE_PATH || './database.sqlite';
 const isLocalPostgresUrl = DATABASE_URL ? /@(localhost|127\.0\.0\.1|\[?::1\]?)(:\d+)?\//i.test(DATABASE_URL) : false;
 const USE_POSTGRES = Boolean(DATABASE_URL && (IS_VERCEL || !isLocalPostgresUrl));
+const SCHEMA_VERSION = '2026-05-02-01';
 
 let pool: any = null;
 let db: any = null;
@@ -209,6 +210,19 @@ async function initDb() {
         console.warn('Could not create uploads directory:', e);
       }
     }
+  }
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS app_metadata (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  const schemaVersion = await db.get('SELECT value FROM app_metadata WHERE key = ?', ['schema_version']);
+  if (schemaVersion?.value === SCHEMA_VERSION) {
+    return;
   }
 
   // Create all tables
@@ -452,6 +466,12 @@ async function initDb() {
       ('Long-term Member', 'long-term-member', 'Account active for over 6 months', 'star');
     `);
   }
+
+  await db.run(`
+    INSERT INTO app_metadata (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+  `, ['schema_version', SCHEMA_VERSION]);
 }
 
 let dbInitialized = false;
@@ -468,6 +488,7 @@ dbInitPromise = initDb().then(() => {
 
 async function startServer() {
   app.use(async (req, res, next) => {
+    if (req.path === '/api/constants') return next();
     if (!dbInitialized) await dbInitPromise;
     if (dbInitError && req.path.startsWith('/api') && req.path !== '/api/constants') {
       const detail = dbInitError instanceof Error ? dbInitError.message : String(dbInitError);
