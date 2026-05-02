@@ -23,7 +23,9 @@ const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 const DATABASE_PATH = process.env.DATABASE_PATH || './database.sqlite';
 const isLocalPostgresUrl = DATABASE_URL ? /@(localhost|127\.0\.0\.1|\[?::1\]?)(:\d+)?\//i.test(DATABASE_URL) : false;
 const USE_POSTGRES = Boolean(DATABASE_URL && (IS_VERCEL || !isLocalPostgresUrl));
-const SCHEMA_VERSION = '2026-05-02-01';
+const SCHEMA_VERSION = '2026-05-02-02';
+const DEMO_ADMIN_PASSWORD = process.env.DEMO_ADMIN_PASSWORD || 'admin123';
+const DEMO_OFFICIAL_PASSWORD = process.env.DEMO_OFFICIAL_PASSWORD || 'official123';
 
 let pool: any = null;
 let db: any = null;
@@ -435,31 +437,44 @@ async function initDb() {
   await ensureColumn('ai_matches', 'confirmed_by', 'INTEGER');
   await ensureColumn('ai_matches', 'confirmed_at', 'TIMESTAMP');
 
-  // Seed Demo Admin Account
+  // Seed demo accounts. Keep these deterministic for capstone/demo deployments
+  // so serverless databases can recover from stale or missing password hashes.
   const demoAdminEmail = 'admin@paknaan.gov'.toLowerCase();
   const adminExists = await db.all('SELECT * FROM users WHERE email = ?', [demoAdminEmail]);
+  const adminHash = await bcrypt.hash(DEMO_ADMIN_PASSWORD, 10);
   
   if (adminExists.length === 0) {
-    const hashedPw = await bcrypt.hash('admin123', 10);
     await db.run(`
       INSERT INTO users (name, email, password, role, provider, email_verified, status)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, ['System Admin', demoAdminEmail, hashedPw, 'admin', 'local', true, 'active']);
+    `, ['System Admin', demoAdminEmail, adminHash, 'admin', 'local', true, 'active']);
     console.log(`Demo Admin account created: ${demoAdminEmail}`);
+  } else {
+    await db.run(`
+      UPDATE users
+      SET password = ?, role = ?, provider = ?, email_verified = ?, status = ?
+      WHERE email = ?
+    `, [adminHash, 'admin', 'local', true, 'active', demoAdminEmail]);
   }
 
   // Seed Demo Official Account
   const demoOfficialEmail = 'official@paknaan.gov'.toLowerCase();
   const officialExists = await db.all('SELECT * FROM users WHERE email = ?', [demoOfficialEmail]);
+  const officialHash = await bcrypt.hash(DEMO_OFFICIAL_PASSWORD, 10);
   
   if (officialExists.length === 0) {
     console.log('Seeding demo official account...');
-    const hashedPw = await bcrypt.hash('official123', 10);
     await db.run(`
       INSERT INTO users (name, email, password, role, provider, email_verified, status)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, ['Paknaan Official', demoOfficialEmail, hashedPw, 'official', 'local', true, 'active']);
+    `, ['Paknaan Official', demoOfficialEmail, officialHash, 'official', 'local', true, 'active']);
     console.log(`Demo Official account created: ${demoOfficialEmail}`);
+  } else {
+    await db.run(`
+      UPDATE users
+      SET password = ?, role = ?, provider = ?, email_verified = ?, status = ?
+      WHERE email = ?
+    `, [officialHash, 'official', 'local', true, 'active', demoOfficialEmail]);
   }
 
   // Insert default badges if not exist
