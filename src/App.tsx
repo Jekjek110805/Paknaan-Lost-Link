@@ -2239,7 +2239,8 @@ const ImageMatchPage = () => {
   const [matches, setMatches] = useState<any[]>([]);
   const [queryDescription, setQueryDescription] = useState('');
   const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState({ title: '', description: '', location: '' });
+  const [statusMessage, setStatusMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
     return () => {
@@ -2290,54 +2291,50 @@ const ImageMatchPage = () => {
     const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
     if (!blob) return;
     setCapturedFile(new File([blob], `found-item-${Date.now()}.jpg`, { type: 'image/jpeg' }));
+    setMatches([]);
+    setQueryDescription('');
+    setErrorMessage('');
+    setStatusMessage('');
   };
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
     if (!file) return;
     if (!file.type.startsWith('image/')) {
-      alert('Please choose an image file.');
+      setErrorMessage('Please choose an image file.');
       e.target.value = '';
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      alert('Image must be 5MB or smaller.');
+      setErrorMessage('Image must be 5MB or smaller.');
       e.target.value = '';
       return;
     }
     setCapturedFile(file);
+    setMatches([]);
+    setQueryDescription('');
+    setErrorMessage('');
+    setStatusMessage('');
   };
 
   const searchMatches = async () => {
-    if (!capturedFile) return alert('Capture or upload a photo first.');
+    if (!capturedFile) {
+      setErrorMessage('Capture or upload a photo first.');
+      return;
+    }
     setLoading(true);
+    setErrorMessage('');
+    setStatusMessage('Finding matches across Lost and Found reports...');
     try {
       const formData = new FormData();
       formData.append('image', await compressImage(capturedFile));
       const data = await apiFormCall('/api/search-item', formData);
       setMatches(data.matches || []);
       setQueryDescription(data.query_description || '');
+      setStatusMessage((data.matches || []).length ? 'Matches found.' : 'No close matches found yet.');
     } catch (err: any) {
-      alert(err.message || 'Image search failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const uploadFoundItem = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!capturedFile) return alert('Capture or upload a photo first.');
-    setLoading(true);
-    try {
-      const formData = new FormData();
-      formData.append('image', await compressImage(capturedFile));
-      Object.entries(form).forEach(([key, value]) => formData.append(key, String(value)));
-      await apiFormCall('/api/upload-item', formData);
-      setForm({ title: '', description: '', location: '' });
-      await searchMatches();
-      alert('Found item saved for image matching.');
-    } catch (err: any) {
-      alert(err.message || 'Could not save found item');
+      setErrorMessage(err.message || 'Image search failed');
+      setStatusMessage('');
     } finally {
       setLoading(false);
     }
@@ -2349,7 +2346,7 @@ const ImageMatchPage = () => {
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[#82b9ff]">Image Match</p>
           <h1 className="text-3xl font-bold text-white">Camera Item Matching</h1>
-          <p className="mt-1 text-slate-400">Capture an item photo and compare it with found-item storage.</p>
+          <p className="mt-1 text-slate-400">Capture or upload an item photo and compare it with existing Lost and Found reports.</p>
         </div>
         <div className="flex gap-2">
           <button type="button" onClick={cameraActive ? stopCamera : startCamera} className="btn-secondary px-4 py-2">
@@ -2364,13 +2361,31 @@ const ImageMatchPage = () => {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+      {(statusMessage || errorMessage) && (
+        <div className={cn(
+          "mb-6 rounded-lg border px-4 py-3 text-sm",
+          errorMessage ? "border-[#ff5c74]/30 bg-[#ff5c74]/15 text-[#ffb3bd]" : "border-[#4f8cff]/30 bg-[#4f8cff]/15 text-[#cfe2ff]"
+        )}>
+          <div className="flex items-center gap-3">
+            {loading && <div className="h-4 w-4 animate-spin rounded-full border-2 border-[#9dc4ff] border-t-transparent" />}
+            <span>{errorMessage || statusMessage}</span>
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
         <div className="glass-card overflow-hidden">
           <div className="relative flex aspect-[4/3] items-center justify-center bg-[#070b1a]">
             {previewUrl ? (
               <img src={previewUrl} alt="Captured item" className="h-full w-full object-cover" />
             ) : (
               <video ref={videoRef} playsInline muted className={cn("h-full w-full object-cover", !cameraActive && "hidden")} />
+            )}
+            {loading && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#050816]/75 text-white backdrop-blur-sm">
+                <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#9dc4ff] border-t-transparent" />
+                <span className="text-sm font-semibold">Finding matches...</span>
+              </div>
             )}
             {!previewUrl && !cameraActive && <Package className="h-16 w-16 text-slate-500" />}
             <canvas ref={canvasRef} className="hidden" />
@@ -2380,7 +2395,7 @@ const ImageMatchPage = () => {
               <Camera className="h-4 w-4" />
               <span>Capture</span>
             </button>
-            <button type="button" onClick={() => { setCapturedFile(null); setMatches([]); setQueryDescription(''); }} disabled={loading} className="btn-secondary px-4 py-2">Clear</button>
+            <button type="button" onClick={() => { setCapturedFile(null); setMatches([]); setQueryDescription(''); setStatusMessage(''); setErrorMessage(''); }} disabled={loading} className="btn-secondary px-4 py-2">Clear</button>
             <button type="button" onClick={searchMatches} disabled={!capturedFile || loading} className="btn-primary ml-auto px-4 py-2">
               <ScanSearch className="h-4 w-4" />
               <span>{loading ? 'Matching...' : 'Find Matches'}</span>
@@ -2388,13 +2403,20 @@ const ImageMatchPage = () => {
           </div>
         </div>
 
-        <form onSubmit={uploadFoundItem} className="glass-card space-y-4 p-5">
-          <h2 className="text-xl font-bold text-white">Save Found Item</h2>
-          <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="form-field" placeholder="Title" required />
-          <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="form-field" rows={4} placeholder="Description" required />
-          <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className="form-field" placeholder="Location" required />
-          <button disabled={!capturedFile || loading} className="btn-primary w-full py-3">Save and Index</button>
-        </form>
+        <div className="glass-card p-5">
+          <h2 className="text-xl font-bold text-white">Search Scope</h2>
+          <div className="mt-4 grid gap-3">
+            <div className="rounded-lg border border-[#ffb84d]/25 bg-[#ffb84d]/10 p-4">
+              <div className="text-sm font-bold text-[#ffd08a]">Lost reports</div>
+              <p className="mt-1 text-sm text-slate-300">Matches can point to resident reports for missing items.</p>
+            </div>
+            <div className="rounded-lg border border-[#19d7b7]/25 bg-[#19d7b7]/10 p-4">
+              <div className="text-sm font-bold text-[#75f7df]">Found reports</div>
+              <p className="mt-1 text-sm text-slate-300">Matches can also point to stored or posted found items.</p>
+            </div>
+          </div>
+          <p className="mt-4 text-sm leading-6 text-slate-400">The captured photo is used only as a temporary search reference. It is not saved as a new item from this page.</p>
+        </div>
       </div>
 
       {queryDescription && (
@@ -2405,7 +2427,11 @@ const ImageMatchPage = () => {
 
       <div className="mt-6">
         <h2 className="mb-4 text-xl font-bold text-white">Closest Matches</h2>
-        {matches.length === 0 ? (
+        {loading ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {[1, 2, 3].map(i => <div key={i} className="glass-card h-72 animate-pulse" />)}
+          </div>
+        ) : matches.length === 0 ? (
           <EmptyState icon={ScanSearch} title="No matches yet" message="Capture a photo and run image matching." />
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -2416,8 +2442,11 @@ const ImageMatchPage = () => {
                 </div>
                 <div className="space-y-2 p-4">
                   <div className="flex items-start justify-between gap-3">
-                    <h3 className="min-w-0 truncate font-semibold text-white">{item.title}</h3>
-                    <span className="rounded-full border border-[#19d7b7]/30 bg-[#19d7b7]/15 px-2 py-1 text-xs font-bold text-[#75f7df]">
+                    <div className="min-w-0">
+                      <h3 className="min-w-0 truncate font-semibold text-white">{item.title}</h3>
+                      <span className={cn("mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-bold uppercase", item.type === 'lost' ? "border-[#ffb84d]/30 bg-[#ffb84d]/15 text-[#ffd08a]" : "border-[#19d7b7]/30 bg-[#19d7b7]/15 text-[#75f7df]")}>{item.type}</span>
+                    </div>
+                    <span className="shrink-0 rounded-full border border-[#4f8cff]/30 bg-[#4f8cff]/15 px-2 py-1 text-xs font-bold text-[#9dc4ff]">
                       {Math.round((item.similarity_score || 0) * 100)}%
                     </span>
                   </div>

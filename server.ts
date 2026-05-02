@@ -338,6 +338,22 @@ async function updateItemEmbedding(itemId: any, description: string, embedding: 
   }
 }
 
+async function getItemSearchEmbedding(item: any) {
+  if (item.embedding_json) {
+    try {
+      const parsed = JSON.parse(item.embedding_json);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as number[];
+    } catch {
+      // Rebuild below when the stored JSON is invalid.
+    }
+  }
+
+  const visualDescription = item.visual_description || [item.title, item.description, item.category, item.location].filter(Boolean).join('\n');
+  const embedding = await createEmbedding(visualDescription);
+  await updateItemEmbedding(item.id, visualDescription, embedding);
+  return embedding;
+}
+
 function createPostgresDb() {
   return {
     type: 'postgres',
@@ -1082,35 +1098,52 @@ async function startServer() {
 
       if (db.type === 'postgres' && pgVectorReady) {
         matches = await db.all(`
-          SELECT id, title, description, location, image_url, visual_description,
+          SELECT id, title, description, type, category, location, image_url, visual_description,
             1 - (embedding_vector <=> ?::vector) AS similarity_score
           FROM items
-          WHERE type = 'found'
-            AND status IN ('posted', 'approved', 'matched')
+          WHERE type IN ('lost', 'found')
+            AND status IN ('posted', 'approved', 'matched', 'pending')
             AND embedding_vector IS NOT NULL
           ORDER BY embedding_vector <=> ?::vector
           LIMIT 5
         `, [vectorToSql(embedding), vectorToSql(embedding)]);
       } else {
         const candidates = await db.all(`
-          SELECT id, title, description, location, image_url, visual_description, embedding_json
+          SELECT id, title, description, type, category, location, image_url, visual_description, embedding_json
           FROM items
-          WHERE type = 'found'
-            AND status IN ('posted', 'approved', 'matched')
-            AND embedding_json IS NOT NULL
+          WHERE type IN ('lost', 'found')
+            AND status IN ('posted', 'approved', 'matched', 'pending')
         `);
-        matches = candidates
-          .map((item: any) => {
-            let itemEmbedding: number[] = [];
-            try {
-              itemEmbedding = JSON.parse(item.embedding_json || '[]');
-            } catch {
-              itemEmbedding = [];
-            }
-            const { embedding_json, ...publicItem } = item;
-            return { ...publicItem, similarity_score: cosineSimilarity(embedding, itemEmbedding) };
-          })
+        const scoredMatches = [];
+        for (const item of candidates) {
+          const itemEmbedding = await getItemSearchEmbedding(item);
+          if (!itemEmbedding.length) continue;
+          const { embedding_json, ...publicItem } = item;
+          scoredMatches.push({ ...publicItem, similarity_score: cosineSimilarity(embedding, itemEmbedding) });
+        }
+        matches = scoredMatches
           .sort((a: any, b: any) => b.similarity_score - a.similarity_score)
+          .slice(0, 5);
+      }
+
+      if (db.type === 'postgres' && pgVectorReady && matches.length < 5) {
+        const existingIds = new Set(matches.map((item: any) => Number(item.id)));
+        const candidates = await db.all(`
+          SELECT id, title, description, type, category, location, image_url, visual_description, embedding_json
+          FROM items
+          WHERE type IN ('lost', 'found')
+            AND status IN ('posted', 'approved', 'matched', 'pending')
+        `);
+        const scoredMatches = [...matches];
+        for (const item of candidates) {
+          if (existingIds.has(Number(item.id))) continue;
+          const itemEmbedding = await getItemSearchEmbedding(item);
+          if (!itemEmbedding.length) continue;
+          const { embedding_json, ...publicItem } = item;
+          scoredMatches.push({ ...publicItem, similarity_score: cosineSimilarity(embedding, itemEmbedding) });
+        }
+        matches = scoredMatches
+          .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
           .slice(0, 5);
       }
 
