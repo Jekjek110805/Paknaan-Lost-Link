@@ -212,7 +212,7 @@ async function initDb() {
   }
 
   // Create all tables
-  await db.exec(toSqliteSchema(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
@@ -365,7 +365,7 @@ async function initDb() {
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
-  `));
+  `);
 
   // CREATE TABLE IF NOT EXISTS does not add columns to databases created by
   // older app versions, so keep these migrations idempotent.
