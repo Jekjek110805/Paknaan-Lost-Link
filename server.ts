@@ -24,6 +24,10 @@ const JWT_SECRET = process.env.JWT_SECRET || 'paknaan-secret-key-change-in-produ
 // Use DATABASE_URL from Supabase, Neon, or Vercel Postgres
 const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 
+if (IS_VERCEL && !DATABASE_URL) {
+  console.error('CRITICAL: DATABASE_URL is missing in environment variables.');
+}
+
 const pool = new pg.Pool({
   connectionString: DATABASE_URL,
   ssl: IS_VERCEL ? { rejectUnauthorized: false } : false
@@ -121,17 +125,21 @@ if (!IS_VERCEL) {
 // Compatibility shim to make Postgres act like the 'sqlite' library
 const db = {
   get: async (sql: string, params: any[] = []) => {
-    const res = await pool.query(sql.replace(/\?/g, (_, i) => `$${i + 1}`), params);
+    let count = 0;
+    const res = await pool.query(sql.replace(/\?/g, () => `$${++count}`), params);
     return res.rows[0];
   },
   all: async (sql: string, params: any[] = []) => {
-    const res = await pool.query(sql.replace(/\?/g, (_, i) => `$${i + 1}`), params);
+    let count = 0;
+    const res = await pool.query(sql.replace(/\?/g, () => `$${++count}`), params);
     return res.rows;
   },
   run: async (sql: string, params: any[] = []) => {
+    let count = 0;
+    const pgSql = sql.replace(/\?/g, () => `$${++count}`);
     // SQLite uses lastID; PostgreSQL requires RETURNING id
-    const querySql = sql.toLowerCase().includes('insert') ? `${sql} RETURNING id` : sql;
-    const res = await pool.query(querySql.replace(/\?/g, (_, i) => `$${i + 1}`), params);
+    const querySql = pgSql.toLowerCase().includes('insert') ? `${pgSql} RETURNING id` : pgSql;
+    const res = await pool.query(querySql, params);
     return { lastID: res.rows[0]?.id };
   },
   exec: async (sql: string) => {
@@ -141,10 +149,10 @@ const db = {
 
 async function initDb() {
   if (!IS_VERCEL) {
-    const fs = await import('node:fs');
-    if (!fs.default.existsSync('./uploads')) {
+    const fs = await import('fs');
+    if (!fs.existsSync('./uploads')) {
       try {
-        fs.default.mkdirSync('./uploads');
+        fs.mkdirSync('./uploads');
       } catch (e) {
         console.warn('Could not create uploads directory:', e);
       }
@@ -647,7 +655,7 @@ async function startServer() {
     
     if (type) { query += ' AND items.type = ?'; params.push(type); countFilters.push('items.type = ?'); countParams.push(type); }
     if (status) { query += ' AND items.status = ?'; params.push(status); countFilters.push('items.status = ?'); countParams.push(status); }
-    else { query += ' AND items.status NOT IN ("rejected", "archived")'; countFilters.push('items.status NOT IN ("rejected", "archived")'); }
+    else { query += " AND items.status NOT IN ('rejected', 'archived')"; countFilters.push("items.status NOT IN ('rejected', 'archived')"); }
     if (category) { query += ' AND items.category = ?'; params.push(category); countFilters.push('items.category = ?'); countParams.push(category); }
     if (zoneFilter) { query += ' AND items.purok = ?'; params.push(zoneFilter); countFilters.push('items.purok = ?'); countParams.push(zoneFilter); }
     if (search) { 
@@ -806,7 +814,7 @@ async function startServer() {
     }
 
     // Check for existing pending claim
-    const existing = await db.get('SELECT * FROM claims WHERE item_id = ? AND user_id = ? AND status IN ("pending", "under_review", "approved")', 
+    const existing = await db.get("SELECT * FROM claims WHERE item_id = ? AND user_id = ? AND status IN ('pending', 'under_review', 'approved')", 
       [item_id, req.user.id]);
     if (existing) {
       return res.status(400).json({ error: 'You already have a pending claim on this item' });
@@ -855,7 +863,7 @@ async function startServer() {
       ['approved', req.user.id, req.params.id]);
     
     await db.run(`
-      INSERT INTO qr_claim_slips (claim_id, token, qr_data, generated_by, expires_at) VALUES (?, ?, ?, ?, datetime('now', '+7 days'))
+      INSERT INTO qr_claim_slips (claim_id, token, qr_data, generated_by, expires_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP + interval '7 days')
     `, [req.params.id, token, qrData, req.user.id]);
 
     // Update item status
