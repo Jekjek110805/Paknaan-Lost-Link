@@ -220,25 +220,30 @@ async function uploadImageFile(file: any) {
   return data.secure_url as string;
 }
 
+async function describeImageWithGemini(file: any, context = '') {
+  if (!geminiApiKey || !file?.buffer || !file?.mimetype) return null;
+
+  const { GoogleGenAI } = await import("@google/genai");
+  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: [
+      {
+        inlineData: {
+          mimeType: file.mimetype,
+          data: file.buffer.toString('base64'),
+        },
+      },
+      `Describe this lost-and-found item for visual search. Focus on object type, colors, brand text, shape, materials, visible labels, damage, and distinctive details. Return one compact searchable paragraph. ${context}`,
+    ],
+  });
+  return response.text?.trim() || null;
+}
+
 async function describeImage(imageUrl: string, context = '', file?: any) {
   if (!OPENAI_API_KEY) {
-    if (geminiApiKey && file?.buffer && file?.mimetype) {
-      const { GoogleGenAI } = await import("@google/genai");
-      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          {
-            inlineData: {
-              mimeType: file.mimetype,
-              data: file.buffer.toString('base64'),
-            },
-          },
-          `Describe this lost-and-found item for visual search. Focus on object type, colors, brand text, shape, materials, visible labels, damage, and distinctive details. Return one compact searchable paragraph. ${context}`,
-        ],
-      });
-      if (response.text) return response.text.trim();
-    }
+    const geminiDescription = await describeImageWithGemini(file, context);
+    if (geminiDescription) return geminiDescription;
 
     return context.trim() || 'Uploaded item photo for visual matching.';
   }
@@ -266,7 +271,10 @@ async function describeImage(imageUrl: string, context = '', file?: any) {
 
   const data: any = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error?.message || 'OpenAI vision request failed');
+    console.warn('OpenAI vision request failed, using fallback:', data.error?.message || response.statusText);
+    const geminiDescription = await describeImageWithGemini(file, context);
+    if (geminiDescription) return geminiDescription;
+    return context.trim() || 'Uploaded item photo for visual matching.';
   }
   const outputText = data.output_text
     || data.output?.flatMap((item: any) => item.content || []).map((part: any) => part.text).filter(Boolean).join(' ');
@@ -293,7 +301,8 @@ async function createEmbedding(text: string) {
 
   const data: any = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error?.message || 'OpenAI embedding request failed');
+    console.warn('OpenAI embedding request failed, using local embedding fallback:', data.error?.message || response.statusText);
+    return createLocalEmbedding(text);
   }
   const embedding = data.data?.[0]?.embedding;
   if (!Array.isArray(embedding)) throw new Error('OpenAI did not return an embedding.');
