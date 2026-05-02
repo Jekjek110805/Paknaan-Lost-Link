@@ -30,13 +30,27 @@ const GoogleIcon = ({ className = 'h-5 w-5' }: { className?: string }) => (
   </svg>
 );
 
+async function parseApiResponse(res: Response) {
+  const contentType = res.headers.get('content-type') || '';
+  const text = await res.text();
+  if (!text) return {};
+  if (contentType.includes('application/json')) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { error: 'Server returned an invalid JSON response.' };
+    }
+  }
+  return { error: text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || 'Server returned an unexpected response.' };
+}
+
 async function apiCall(endpoint: string, options: any = {}) {
   const token = localStorage.getItem('token');
   const headers: any = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   
   const res = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
-  const data = await res.json();
+  const data = await parseApiResponse(res);
   if (!res.ok) throw new Error(data.error || 'Request failed');
   return data;
 }
@@ -51,7 +65,7 @@ async function uploadImage(file: File) {
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     body: formData,
   });
-  const data = await res.json();
+  const data = await parseApiResponse(res);
   if (!res.ok) throw new Error(data.error || 'Image upload failed');
   return data.url as string;
 }
@@ -683,7 +697,7 @@ const SignUp = () => {
         <form onSubmit={handleSubmit} className="space-y-4">
           <input type="text" placeholder="Full Name" value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="form-field" required />
           <input type="email" placeholder="Email Address" value={form.email} onChange={e => setForm({...form, email: e.target.value})} className="form-field" required />
-          <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-4">
             <input type="password" placeholder="Password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} className="form-field" required />
             <input type="password" placeholder="Confirm" value={form.confirmPassword} onChange={e => setForm({...form, confirmPassword: e.target.value})} className="form-field" required />
           </div>
