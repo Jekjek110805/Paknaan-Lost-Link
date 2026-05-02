@@ -169,6 +169,8 @@ const optionalValue = (value: any) => {
   return value;
 };
 
+const averageHashSize = 8;
+
 const vectorToSql = (embedding: number[]) => `[${embedding.join(',')}]`;
 
 const cosineSimilarity = (a: number[], b: number[]) => {
@@ -182,6 +184,39 @@ const cosineSimilarity = (a: number[], b: number[]) => {
   }
   if (!normA || !normB) return 0;
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+};
+
+async function createImageHash(file: any) {
+  if (!file?.buffer) return null;
+  try {
+    const { Jimp } = await import('jimp');
+    const image = await Jimp.read(file.buffer);
+    image.resize({ w: averageHashSize, h: averageHashSize }).greyscale();
+    const pixels: number[] = [];
+    for (let y = 0; y < averageHashSize; y++) {
+      for (let x = 0; x < averageHashSize; x++) {
+        const color = image.getPixelColor(x, y);
+        const red = (color >> 24) & 255;
+        const green = (color >> 16) & 255;
+        const blue = (color >> 8) & 255;
+        pixels.push(Math.round((red + green + blue) / 3));
+      }
+    }
+    const average = pixels.reduce((sum, value) => sum + value, 0) / pixels.length;
+    return pixels.map(value => value >= average ? '1' : '0').join('');
+  } catch (error: any) {
+    console.warn('Image hash failed:', error?.message || error);
+    return null;
+  }
+}
+
+const hashSimilarity = (a?: string | null, b?: string | null) => {
+  if (!a || !b || a.length !== b.length) return null;
+  let same = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] === b[i]) same++;
+  }
+  return same / a.length;
 };
 
 const createLocalEmbedding = (text: string, dimensions = 1536) => {
@@ -636,6 +671,13 @@ async function updateItemClipEmbedding(itemId: any, embedding: number[]) {
   }
 }
 
+async function updateItemImageHash(itemId: any, imageHash: string) {
+  await db.run(
+    'UPDATE items SET image_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [imageHash, itemId]
+  );
+}
+
 async function getItemSearchEmbedding(item: any) {
   if (item.embedding_json) {
     try {
@@ -681,6 +723,8 @@ async function indexItemForVisualSearch(itemId: any) {
     await updateItemEmbedding(item.id, visualDescription, textEmbedding);
 
     if (file) {
+      const imageHash = await createImageHash(file);
+      if (imageHash) await updateItemImageHash(item.id, imageHash);
       const imageEmbedding = await createManagedImageEmbedding(file, searchableText);
       if (imageEmbedding) await updateItemClipEmbedding(item.id, imageEmbedding.embedding);
     }
@@ -763,6 +807,7 @@ async function ensureImageMatchingColumns() {
   await ensureColumn('items', 'visual_description', 'TEXT');
   await ensureColumn('items', 'embedding_json', 'TEXT');
   await ensureColumn('items', 'clip_embedding_json', 'TEXT');
+  await ensureColumn('items', 'image_hash', 'TEXT');
   await ensureVectorColumns();
 }
 
@@ -1398,10 +1443,11 @@ async function startServer() {
       const searchableText = [title, description, location, visualDescription].filter(Boolean).join('\n');
       const embedding = await createEmbedding(searchableText);
       const imageEmbedding = await createManagedImageEmbedding(req.file, searchableText);
+      const imageHash = await createImageHash(req.file);
 
       const result = await db.run(`
-        INSERT INTO items (title, description, type, category, location, purok, image_url, user_id, status, visual_description, embedding_json)
-        VALUES (?, ?, 'found', 'Others', ?, ?, ?, ?, 'posted', ?, ?)
+        INSERT INTO items (title, description, type, category, location, purok, image_url, user_id, status, visual_description, embedding_json, image_hash)
+        VALUES (?, ?, 'found', 'Others', ?, ?, ?, ?, 'posted', ?, ?, ?)
       `, [
         title,
         description,
@@ -1411,6 +1457,7 @@ async function startServer() {
         req.user?.id || null,
         visualDescription,
         JSON.stringify(embedding),
+        imageHash,
       ]);
       await updateItemEmbedding(result.lastID, visualDescription, embedding);
       if (imageEmbedding) await updateItemClipEmbedding(result.lastID, imageEmbedding.embedding);
@@ -1438,6 +1485,7 @@ async function startServer() {
       const imageUrl = getUploadedFileUrl(req.file);
       let visualDescription = '';
       let queryText = 'Uploaded item photo for matching.';
+      const queryImageHash = await createImageHash(req.file);
       const imageEmbedding = await createManagedImageEmbedding(req.file, queryText);
       const clipEmbedding = imageEmbedding?.embedding || null;
       let embedding: number[] = [];
@@ -1445,7 +1493,7 @@ async function startServer() {
 
       if (clipEmbedding && db.type === 'postgres' && clipVectorReady) {
         matches = await db.all(`
-          SELECT id, title, description, type, category, location, image_url, visual_description,
+          SELECT id, title, description, type, category, location, image_url, visual_description, image_hash,
             1 - (clip_embedding_vector <=> ?::vector) AS clip_score
           FROM items
           WHERE type IN ('lost', 'found')
@@ -1459,7 +1507,7 @@ async function startServer() {
         queryText = visualDescription || queryText;
         embedding = await createEmbedding(visualDescription || queryText);
         matches = await db.all(`
-          SELECT id, title, description, type, category, location, image_url, visual_description,
+          SELECT id, title, description, type, category, location, image_url, visual_description, image_hash,
             1 - (embedding_vector <=> ?::vector) AS vector_score
           FROM items
           WHERE type IN ('lost', 'found')
@@ -1473,7 +1521,7 @@ async function startServer() {
         queryText = visualDescription || queryText;
         embedding = await createEmbedding(visualDescription || queryText);
         const candidates = await db.all(`
-          SELECT id, title, description, type, category, location, image_url, visual_description, embedding_json, clip_embedding_json
+          SELECT id, title, description, type, category, location, image_url, visual_description, image_hash, embedding_json, clip_embedding_json
           FROM items
           WHERE type IN ('lost', 'found')
             AND status IN ('posted', 'approved', 'matched', 'pending')
@@ -1494,14 +1542,16 @@ async function startServer() {
           const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
           const vectorScore = cosineSimilarity(embedding, itemEmbedding);
           const clipScore = clipEmbedding && storedClipEmbedding ? cosineSimilarity(clipEmbedding, storedClipEmbedding) : null;
+          const imageHashScore = hashSimilarity(queryImageHash, item.image_hash);
           const tokenScore = textTokenSimilarity(queryText, itemText);
           const calibratedTextScore = calibrateSimilarityScore(vectorScore, tokenScore);
           scoredMatches.push({
             ...publicItem,
             vector_score: vectorScore,
             clip_score: clipScore,
+            image_hash_score: imageHashScore,
             token_score: tokenScore,
-            similarity_score: clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4),
+            similarity_score: Math.max(imageHashScore ?? 0, clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4)),
           });
         }
         matches = scoredMatches
@@ -1512,7 +1562,7 @@ async function startServer() {
       if (db.type === 'postgres' && pgVectorReady && matches.length < 5) {
         const existingIds = new Set(matches.map((item: any) => Number(item.id)));
         const candidates = await db.all(`
-          SELECT id, title, description, type, category, location, image_url, visual_description, embedding_json, clip_embedding_json
+          SELECT id, title, description, type, category, location, image_url, visual_description, image_hash, embedding_json, clip_embedding_json
           FROM items
           WHERE type IN ('lost', 'found')
             AND status IN ('posted', 'approved', 'matched', 'pending')
@@ -1534,14 +1584,16 @@ async function startServer() {
           const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
           const vectorScore = cosineSimilarity(embedding, itemEmbedding);
           const clipScore = clipEmbedding && storedClipEmbedding ? cosineSimilarity(clipEmbedding, storedClipEmbedding) : null;
+          const imageHashScore = hashSimilarity(queryImageHash, item.image_hash);
           const tokenScore = textTokenSimilarity(queryText, itemText);
           const calibratedTextScore = calibrateSimilarityScore(vectorScore, tokenScore);
           scoredMatches.push({
             ...publicItem,
             vector_score: vectorScore,
             clip_score: clipScore,
+            image_hash_score: imageHashScore,
             token_score: tokenScore,
-            similarity_score: clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4),
+            similarity_score: Math.max(imageHashScore ?? 0, clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4)),
           });
         }
         matches = scoredMatches
@@ -1554,14 +1606,18 @@ async function startServer() {
           const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
           const vectorScore = Number(item.vector_score ?? item.similarity_score ?? 0);
           const clipScore = item.clip_score === undefined || item.clip_score === null ? null : Number(item.clip_score || 0);
+          const imageHashScore = item.image_hash_score === undefined || item.image_hash_score === null
+            ? hashSimilarity(queryImageHash, item.image_hash)
+            : Number(item.image_hash_score || 0);
           const tokenScore = Number(item.token_score ?? textTokenSimilarity(queryText, itemText));
           const calibratedTextScore = calibrateSimilarityScore(vectorScore, tokenScore);
           return {
             ...item,
             vector_score: vectorScore,
             clip_score: clipScore,
+            image_hash_score: imageHashScore,
             token_score: tokenScore,
-            similarity_score: clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4),
+            similarity_score: Math.max(imageHashScore ?? 0, clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4)),
           };
         })
         .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
@@ -1582,6 +1638,7 @@ async function startServer() {
           similarity_score: Number(item.similarity_score ?? calibrateSimilarityScore(Number(item.vector_score || 0), 0)),
           vector_score: Number(item.vector_score || 0),
           clip_score: item.clip_score === undefined || item.clip_score === null ? null : Number(item.clip_score || 0),
+          image_hash_score: item.image_hash_score === undefined || item.image_hash_score === null ? null : Number(item.image_hash_score || 0),
           token_score: Number(item.token_score || 0),
           ai_score: item.ai_score === undefined ? null : Number(item.ai_score || 0),
           match_reason: item.match_reason || null,
