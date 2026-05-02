@@ -40,10 +40,6 @@ const getAppUrl = () => {
   }
   return url.replace(/\/+$/, '');
 };
-const getGoogleRedirectUri = () => (process.env.GOOGLE_REDIRECT_URI?.trim() || `${getAppUrl()}/api/auth/google/callback`).replace(/\/+$/, '');
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID?.trim();
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET?.trim();
-
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
 
@@ -310,27 +306,35 @@ async function initDb() {
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
-    CREATE TABLE IF NOT EXISTS password_resets (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER,
-      token TEXT NOT NULL,
-      expires_at TIMESTAMP NOT NULL,
-      used_at TIMESTAMP,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS social_accounts (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER,
-      provider TEXT NOT NULL,
-      provider_id TEXT NOT NULL,
-      access_token TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id),
-      UNIQUE(user_id, provider)
-    );
   `);
+
+  // Seed Demo Admin Account
+  const demoAdminEmail = 'admin@paknaan.gov'.toLowerCase();
+  const { rows: adminExists } = await pool.query('SELECT * FROM users WHERE email = $1', [demoAdminEmail]);
+  
+  if (adminExists.length === 0) {
+    const hashedPw = await bcrypt.hash('admin123', 10);
+    await pool.query(`
+      INSERT INTO users (name, email, password, role, provider, email_verified, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, ['System Admin', demoAdminEmail, hashedPw, 'admin', 'local', true, 'active']);
+    console.log(`Demo Admin account created: ${demoAdminEmail}`);
+  }
+
+  // Seed Demo Official Account
+  const demoOfficialEmail = 'official@paknaan.gov'.toLowerCase();
+  const { rows: officialExists } = await pool.query('SELECT * FROM users WHERE email = $1', [demoOfficialEmail]);
+  
+  if (officialExists.length === 0) {
+    console.log('Seeding demo official account...');
+    const hashedPw = await bcrypt.hash('official123', 10);
+    await pool.query(`
+      INSERT INTO users (name, email, password, role, provider, email_verified, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, ['Paknaan Official', demoOfficialEmail, hashedPw, 'official', 'local', true, 'active']);
+    console.log(`Demo Official account created: ${demoOfficialEmail}`);
+  }
+
   // Insert default badges if not exist
   const { rows: existingBadges } = await pool.query('SELECT * FROM badges');
   if (existingBadges.length === 0) {
@@ -346,13 +350,19 @@ async function initDb() {
   }
 }
 
+let dbInitialized = false;
+const dbInitPromise = initDb().then(() => {
+  dbInitialized = true;
+  console.log('Database initialized successfully');
+}).catch(err => {
+  console.error('Database initialization failed:', err);
+});
+
 async function startServer() {
-  try {
-    await initDb();
-    console.log('Database initialized successfully');
-  } catch (err) {
-    console.error('Database initialization failed:', err);
-  }
+  app.use(async (req, res, next) => {
+    if (!dbInitialized) await dbInitPromise;
+    next();
+  });
 
   // ==================== MIDDLEWARE ====================
   
@@ -393,40 +403,6 @@ async function startServer() {
     return returnTo;
   };
 
-  const signOAuthState = (payload: string) => {
-    return crypto.createHmac('sha256', JWT_SECRET).update(payload).digest('base64url');
-  };
-
-  const createOAuthState = (returnTo?: unknown) => {
-    const payload = Buffer.from(JSON.stringify({
-      returnTo: sanitizeReturnTo(returnTo),
-      nonce: crypto.randomBytes(16).toString('hex'),
-      createdAt: Date.now(),
-    })).toString('base64url');
-    return `${payload}.${signOAuthState(payload)}`;
-  };
-
-  const parseOAuthState = (state?: unknown) => {
-    if (typeof state !== 'string') return '/dashboard';
-    const [payload, signature] = state.split('.');
-    if (!payload || !signature || signOAuthState(payload) !== signature) return '/dashboard';
-
-    try {
-      const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-      if (typeof parsed.createdAt !== 'number' || Date.now() - parsed.createdAt > 10 * 60 * 1000) {
-        return '/dashboard';
-      }
-      return sanitizeReturnTo(parsed.returnTo);
-    } catch {
-      return '/dashboard';
-    }
-  };
-
-  const redirectGoogleError = (res: any, message: string) => {
-    const fragment = new URLSearchParams({ error: message }).toString();
-    return res.redirect(`${getAppUrl()}/auth/google/callback#${fragment}`);
-  };
-
   const getPublicUser = (user: any) => ({
     id: user.id,
     name: user.name,
@@ -441,132 +417,12 @@ async function startServer() {
 
   // ==================== AUTH ROUTES ====================
 
-  app.get('/api/auth/google', (req, res) => {
-    if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
-      return redirectGoogleError(res, 'Google login is not configured yet.');
-    }
-
-    const params = new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      redirect_uri: getGoogleRedirectUri(),
-      response_type: 'code',
-      scope: 'openid email profile',
-      access_type: 'offline',
-      prompt: 'select_account',
-      state: createOAuthState(req.query.returnTo),
-    });
-
-    return res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
-  });
-
-  app.get('/api/auth/google/callback', async (req, res) => {
-    if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
-      return redirectGoogleError(res, 'Google login is not configured yet.');
-    }
-
-    const { code, error, state } = req.query;
-    if (error) return redirectGoogleError(res, String(error));
-    if (typeof code !== 'string') return redirectGoogleError(res, 'Google did not return an authorization code.');
-
-    try {
-      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          code,
-          client_id: GOOGLE_CLIENT_ID,
-          client_secret: GOOGLE_CLIENT_SECRET,
-          redirect_uri: getGoogleRedirectUri(),
-          grant_type: 'authorization_code',
-        }).toString(),
-      });
-
-      const tokenData: any = await tokenRes.json();
-      if (!tokenRes.ok || !tokenData.access_token) {
-        console.error('Google token exchange failed:', tokenData);
-        return redirectGoogleError(res, 'Could not verify your Google account.');
-      }
-
-      const profileRes = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      });
-      const profile: any = await profileRes.json();
-
-      if (!profileRes.ok || !profile.sub || !profile.email) {
-        console.error('Google profile request failed:', profile);
-        return redirectGoogleError(res, 'Could not read your Google profile.');
-      }
-      if (!profile.email_verified) {
-        return redirectGoogleError(res, 'Please verify your Gmail address before signing in.');
-      }
-
-      const normalizedEmail = String(profile.email).toLowerCase();
-      const linkedUser = await db.get(
-        `SELECT users.* FROM social_accounts
-         INNER JOIN users ON users.id = social_accounts.user_id
-         WHERE social_accounts.provider = ? AND social_accounts.provider_id = ?`,
-        ['google', profile.sub]
-      );
-
-      let user = linkedUser || await db.get('SELECT * FROM users WHERE lower(email) = lower(?)', [normalizedEmail]);
-
-      if (!user) {
-        const result = await db.run(
-          `INSERT INTO users (name, email, password, provider, photo_url, email_verified, status)
-           VALUES (?, ?, NULL, 'google', ?, 1, 'active')`,
-          [profile.name || normalizedEmail, normalizedEmail, profile.picture || null]
-        );
-        user = await db.get('SELECT * FROM users WHERE id = ?', [result.lastID]);
-      } else {
-        await db.run(
-          `UPDATE users
-           SET name = COALESCE(NULLIF(?, ''), name),
-               email = ?,
-               provider = 'google',
-               photo_url = COALESCE(?, photo_url),
-               email_verified = 1,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-          [profile.name || user.name, normalizedEmail, profile.picture || null, user.id]
-        );
-        user = await db.get('SELECT * FROM users WHERE id = ?', [user.id]);
-      }
-
-      if (user.status === 'suspended') {
-        return redirectGoogleError(res, 'This account is suspended.');
-      }
-
-      await db.run(
-        `INSERT INTO social_accounts (user_id, provider, provider_id, access_token)
-         VALUES (?, 'google', ?, ?)
-         ON CONFLICT(user_id, provider) DO UPDATE SET
-           provider_id = excluded.provider_id,
-           access_token = excluded.access_token`,
-        [user.id, profile.sub, tokenData.access_token]
-      );
-
-      const token = jwt.sign({ id: user.id, role: user.role, name: user.name }, JWT_SECRET);
-      await logActivity(user.id, 'google_login');
-
-      const returnTo = parseOAuthState(state);
-      const fragment = new URLSearchParams({
-        token,
-        user: JSON.stringify(getPublicUser(user)),
-        returnTo,
-      }).toString();
-
-      return res.redirect(`${getAppUrl()}/auth/google/callback#${fragment}`);
-    } catch (e) {
-      console.error('Google login failed:', e);
-      return redirectGoogleError(res, 'Google login failed. Please try again.');
-    }
-  });
-
   app.post('/api/auth/register', async (req, res) => {
-    const { name, email, password } = req.body;
+    let { name, email, password } = req.body;
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'All fields are required' });
     }
+    email = email.trim().toLowerCase();
     const hashedPassword = await bcrypt.hash(password, 10);
     try {
       const result = await db.run(
@@ -585,7 +441,9 @@ async function startServer() {
   });
 
   app.post('/api/auth/login', async (req, res) => {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    email = email.trim().toLowerCase();
     const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
     if (!user || !user.password) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -598,15 +456,7 @@ async function startServer() {
     await logActivity(user.id, 'login');
     res.json({ 
       token, 
-      user: { 
-        id: user.id, 
-        name: user.name, 
-        email: user.email, 
-        role: user.role,
-        photo_url: user.photo_url,
-        zone: user.purok,
-        verified: user.verified_at ? true : false
-      } 
+      user: getPublicUser(user)
     });
   });
 
@@ -632,17 +482,6 @@ async function startServer() {
     res.json({ message: 'Profile updated', user: getPublicUser(user) });
   });
 
-  app.put('/api/auth/password', authenticateToken, async (req: any, res) => {
-    const { currentPassword, newPassword } = req.body;
-    const user = await db.get('SELECT password FROM users WHERE id = ?', [req.user.id]);
-    if (!user?.password || !(await bcrypt.compare(currentPassword, user.password))) {
-      return res.status(400).json({ error: 'Current password is incorrect' });
-    }
-    const hashed = await bcrypt.hash(newPassword, 10);
-    await db.run('UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [hashed, req.user.id]);
-    res.json({ message: 'Password changed successfully' });
-  });
-
   // ==================== ITEM ROUTES ====================
 
   app.get('/api/items', async (req, res) => {
@@ -654,8 +493,11 @@ async function startServer() {
     const countParams: any[] = [];
     
     if (type) { query += ' AND items.type = ?'; params.push(type); countFilters.push('items.type = ?'); countParams.push(type); }
-    if (status) { query += ' AND items.status = ?'; params.push(status); countFilters.push('items.status = ?'); countParams.push(status); }
-    else { query += " AND items.status NOT IN ('rejected', 'archived')"; countFilters.push("items.status NOT IN ('rejected', 'archived')"); }
+    if (status && status !== 'all') { 
+      query += ' AND items.status = ?'; params.push(status); countFilters.push('items.status = ?'); countParams.push(status); 
+    } else if (!status) {
+      query += " AND items.status NOT IN ('rejected', 'archived')"; countFilters.push("items.status NOT IN ('rejected', 'archived')"); 
+    }
     if (category) { query += ' AND items.category = ?'; params.push(category); countFilters.push('items.category = ?'); countParams.push(category); }
     if (zoneFilter) { query += ' AND items.purok = ?'; params.push(zoneFilter); countFilters.push('items.purok = ?'); countParams.push(zoneFilter); }
     if (search) { 
@@ -1026,6 +868,19 @@ async function startServer() {
     res.json(matches);
   });
 
+  app.get('/api/ai/matches/my', authenticateToken, async (req: any, res) => {
+    const matches = await db.all(`
+      SELECT m.*, 
+        l.title as lost_title, l.user_id as lost_user_id,
+        f.title as found_title, f.user_id as found_user_id
+      FROM ai_matches m
+      LEFT JOIN items l ON m.lost_item_id = l.id
+      LEFT JOIN items f ON m.found_item_id = f.id
+      WHERE (l.user_id = ? OR f.user_id = ?) AND m.status = 'pending'
+    `, [req.user.id, req.user.id]);
+    res.json(matches);
+  });
+
   app.put('/api/ai/matches/:id/confirm', authenticateToken, verifyRole(['admin', 'official']), async (req: any, res) => {
     const match = await db.get('SELECT * FROM ai_matches WHERE id = ?', [req.params.id]);
     if (!match) return res.status(404).json({ error: 'Match not found' });
@@ -1088,6 +943,10 @@ async function startServer() {
       rejectedReports: (await db.get("SELECT COUNT(*) as count FROM items WHERE status = 'rejected'"))?.count || 0,
     };
 
+    const typeStats = await db.all(`
+      SELECT type, COUNT(*) as count FROM items GROUP BY type
+    `);
+
     const categoryStats = await db.all(`
       SELECT category, COUNT(*) as count FROM items WHERE status NOT IN ('rejected', 'archived') GROUP BY category ORDER BY count DESC LIMIT 5
     `);
@@ -1096,11 +955,31 @@ async function startServer() {
       SELECT purok as zone, COUNT(*) as count FROM items WHERE status NOT IN ('rejected', 'archived') GROUP BY purok ORDER BY count DESC
     `);
 
+    const reportsTrend = await db.all(`
+      SELECT TO_CHAR(created_at, 'Mon DD') as day, COUNT(*) as count 
+      FROM items 
+      WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' 
+      GROUP BY day, date_trunc('day', created_at)
+      ORDER BY date_trunc('day', created_at) ASC
+    `);
+
     const recentActivity = await db.all(`
       SELECT al.*, u.name as user_name FROM activity_logs al LEFT JOIN users u ON al.user_id = u.id ORDER BY al.created_at DESC LIMIT 20
     `);
 
-    res.json({ stats, categoryStats, zoneStats, recentActivity });
+    res.json({ stats, typeStats, categoryStats, zoneStats, reportsTrend, recentActivity });
+  });
+
+  app.get('/api/admin/logs', authenticateToken, verifyRole(['admin']), async (req, res) => {
+    const { page = 1, limit = 50 } = req.query;
+    const logs = await db.all(`
+      SELECT al.*, u.name as user_name 
+      FROM activity_logs al 
+      LEFT JOIN users u ON al.user_id = u.id 
+      ORDER BY al.created_at DESC 
+      LIMIT ? OFFSET ?
+    `, [Number(limit), (Number(page) - 1) * Number(limit)]);
+    res.json(logs);
   });
 
   app.get('/api/admin/users', authenticateToken, verifyRole(['admin']), async (req, res) => {

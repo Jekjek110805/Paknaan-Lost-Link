@@ -5,7 +5,8 @@ import {
   Bell, Menu, X, LayoutDashboard, LogOut, ChevronRight, TrendingUp, 
   Award, AlertCircle, CheckCircle, XCircle, Eye, Edit, Trash2, 
   QrCode, FileText, Download, Share2, Filter, ArrowLeft, Home as HomeIcon,
-  BarChart3, Users, Package, MessageSquare, Star, AlertTriangle, ImagePlus
+  BarChart3, Users, Package, MessageSquare, Star, AlertTriangle, ImagePlus,
+  Database, History, Scan
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -178,146 +179,157 @@ const ADMIN_STAT_STYLES: Record<string, { bg: string; text: string }> = {
 
 // ==================== COMPONENTS ====================
 
-const Navbar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
+const Sidebar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
 
   const navLinks = [
-    { name: 'Home', path: '/' },
-    { name: 'Lost Items', path: '/items/lost' },
-    { name: 'Found Items', path: '/items/found' },
-    { name: 'Report Item', path: '/post' },
+    { name: 'Home', path: '/', icon: HomeIcon },
+    { name: 'Lost Items', path: '/items/lost', icon: Search },
+    { name: 'Found Items', path: '/items/found', icon: Package },
+    { name: 'Report Item', path: '/post', icon: PlusCircle },
   ];
+
   const adminLinks = [
-    { name: 'Reports Queue', path: '/admin/reports' },
-    { name: 'Claims', path: '/admin/claims' },
-    { name: 'Users', path: '/admin/users' },
+    { name: 'Reports Queue', path: '/admin/reports', icon: FileText },
+    { name: 'Claims', path: '/admin/claims', icon: MessageSquare },
+    { name: 'Users', path: '/admin/users', icon: Users },
+    { name: 'System Database', path: '/admin/database', icon: Database },
   ];
+
+  const NavItem = ({ link }: { link: any }) => (
+    <Link
+      to={link.path}
+      onClick={() => setIsOpen(false)}
+      className={cn(
+        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all duration-200",
+        location.pathname === link.path 
+          ? "bg-[#4f8cff]/15 text-[#9dc4ff] shadow-sm" 
+          : "text-slate-400 hover:bg-white/5 hover:text-white"
+      )}
+    >
+      <link.icon className={cn("h-5 w-5", location.pathname === link.path ? "text-[#9dc4ff]" : "text-slate-500")} />
+      <span className="whitespace-nowrap">{link.name}</span>
+    </Link>
+  );
 
   return (
-    <nav className="glass-navbar sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex h-16 items-center justify-between gap-4">
-          <Link to="/" className="flex min-w-0 items-center gap-3" aria-label="Paknaan LostLink home">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-white">
-              <img src={logoUrl} alt="" className="h-full w-full object-contain p-1" />
-            </span>
-            <span className="min-w-0 leading-none">
-              <span className="block text-lg font-black tracking-normal text-white sm:text-xl">Paknaan LostLink</span>
-              <span className="mt-1 hidden text-[10px] font-bold uppercase tracking-wider text-[#82b9ff] sm:block">Lost and Found System</span>
-            </span>
-          </Link>
+    <>
+      {/* Mobile Top Header */}
+      <div className="md:hidden sticky top-0 z-40 flex h-16 items-center justify-between border-b border-white/10 bg-[#070b1a] px-4">
+        <Link to="/" className="flex items-center gap-2">
+          <div className="h-8 w-8 overflow-hidden rounded-md bg-white p-0.5">
+            <img src={logoUrl} alt="" className="h-full w-full object-contain" />
+          </div>
+          <span className="text-lg font-black text-white">LostLink</span>
+        </Link>
+        <button 
+          onClick={() => setIsOpen(true)}
+          className="rounded-lg p-2 text-slate-300 hover:bg-white/10"
+        >
+          <Menu className="h-6 w-6" />
+        </button>
+      </div>
 
-          <div className="hidden md:flex items-center gap-2">
-            {navLinks.map((link) => (
-              <Link
-                key={link.name}
-                to={link.path}
-                className={cn(
-                  "rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-colors hover:bg-white/10 hover:text-white",
-                  location.pathname === link.path ? "bg-[#4f8cff]/15 text-[#9dc4ff]" : "text-slate-300"
+      {/* Sidebar Backdrop (Mobile) */}
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsOpen(false)}
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm md:hidden"
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Sidebar Content */}
+      <aside className={cn(
+        "fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-white/10 bg-[#070b1a] transition-transform duration-300 ease-in-out md:translate-x-0",
+        isOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
+        {/* Logo Section */}
+        <div className="flex h-20 items-center justify-between px-6">
+          <Link to="/" className="flex items-center gap-3">
+            <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white">
+              <img src={logoUrl} alt="" className="h-full w-full object-contain p-1" />
+            </div>
+            <div className="min-w-0 leading-tight">
+              <span className="block text-lg font-black tracking-tight text-white whitespace-nowrap">Paknaan</span>
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-[#82b9ff] whitespace-nowrap">LostLink System</span>
+            </div>
+          </Link>
+          <button onClick={() => setIsOpen(false)} className="md:hidden text-slate-400 hover:text-white">
+            <X className="h-6 w-6" />
+          </button>
+        </div>
+
+        {/* Navigation Groups */}
+        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-8 no-scrollbar">
+          {/* Group 1: Main */}
+          {user?.role !== 'admin' && (
+            <div className="space-y-1">
+              <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Main Menu</p>
+              {navLinks.map((link) => (
+                <NavItem key={link.name} link={link} />
+              ))}
+            </div>
+          )}
+
+          {/* Group 2: User Account */}
+          {user && (
+            <div className="space-y-1">
+              <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">My Account</p>
+              <NavItem link={{ name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard }} />
+              <NavItem link={{ name: 'Notifications', path: '/notifications', icon: Bell }} />
+              <NavItem link={{ name: 'My Profile', path: '/profile', icon: User }} />
+            </div>
+          )}
+
+          {/* Group 3: Admin Management */}
+          {user?.role === 'admin' && (
+            <div className="space-y-1">
+              <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Management</p>
+              {adminLinks.map((link) => (
+                <NavItem key={link.name} link={link} />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* User Footer Section */}
+        <div className="border-t border-white/10 p-4">
+          {user ? (
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 overflow-hidden rounded-full border border-white/20 bg-white/10">
+                {user.photo_url ? (
+                  <img src={user.photo_url} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-sm font-bold text-[#82b9ff]">
+                    {user.name[0]}
+                  </div>
                 )}
-              >
-                {link.name}
-              </Link>
-            ))}
-            {user?.role === 'admin' && adminLinks.map((link) => (
-              <Link
-                key={link.name}
-                to={link.path}
-                className={cn(
-                  "rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-colors hover:bg-white/10 hover:text-white",
-                  location.pathname === link.path ? "bg-[#4f8cff]/15 text-[#9dc4ff]" : "text-slate-300"
-                )}
-              >
-                {link.name}
-              </Link>
-            ))}
-            {user ? (
-              <div className="ml-2 flex items-center gap-2 border-l border-white/10 pl-4">
-                <Link to="/notifications" className="rounded-md p-2 text-slate-300 transition-colors hover:bg-white/10 hover:text-white" aria-label="Notifications">
-                  <Bell className="h-4 w-4" />
-                </Link>
-                <Link to="/dashboard" className="inline-flex items-center gap-2 rounded-md border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-white/15" aria-label="Open dashboard">
-                  <User className="h-4 w-4" />
-                  <span>Dashboard</span>
-                </Link>
-                <Link to="/profile" className="rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-300 transition-colors hover:bg-white/10 hover:text-white">
-                  Profile
-                </Link>
-                <button onClick={onLogout} className="rounded-md px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-300 transition-colors hover:bg-[#ff5c74]/10 hover:text-[#ffa2ae]">
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold text-white">{user.name}</p>
+                <button 
+                  onClick={onLogout}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-[#ffa2ae] transition hover:text-[#ffb3bd]"
+                >
+                  <LogOut className="h-3 w-3" />
                   Logout
                 </button>
               </div>
-            ) : (
-              <Link to="/login" className="btn-primary ml-2">
-                Login
-              </Link>
-            )}
-          </div>
-
-          <div className="flex items-center md:hidden">
-            <button
-              onClick={() => setIsOpen(!isOpen)}
-              className="rounded-lg p-2 text-slate-200 transition hover:bg-white/10 hover:text-white"
-              aria-label={isOpen ? 'Close menu' : 'Open menu'}
-            >
-              {isOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="border-t border-white/10 bg-[#070b1a] md:hidden">
-            <div className="space-y-1 px-4 py-3">
-                {navLinks.map((link) => (
-                <Link
-                  key={link.name}
-                  to={link.path}
-                  onClick={() => setIsOpen(false)}
-                  className={cn(
-                    "block rounded-lg px-3 py-2 text-sm font-semibold transition hover:bg-white/10 hover:text-white",
-                    location.pathname === link.path ? "bg-[#4f8cff]/15 text-[#9dc4ff]" : "text-slate-300"
-                  )}
-                >
-                  {link.name}
-                </Link>
-                ))}
-                {user?.role === 'admin' && adminLinks.map((link) => (
-                  <Link
-                    key={link.name}
-                    to={link.path}
-                    onClick={() => setIsOpen(false)}
-                    className="block rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white"
-                  >
-                    {link.name}
-                  </Link>
-                ))}
-                {user ? (
-                <>
-                  <Link to="/notifications" onClick={() => setIsOpen(false)} className="block rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white">
-                    Notifications
-                  </Link>
-                  <Link to="/dashboard" onClick={() => setIsOpen(false)} className="block rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white">
-                    Dashboard
-                  </Link>
-                  <Link to="/profile" onClick={() => setIsOpen(false)} className="block rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white">
-                    Profile
-                  </Link>
-                  <button onClick={() => { onLogout(); setIsOpen(false); }} className="block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-[#ffa2ae] transition hover:bg-[#ff5c74]/10">
-                    Logout
-                  </button>
-                </>
-              ) : (
-                <Link to="/login" onClick={() => setIsOpen(false)} className="block rounded-lg bg-gradient-to-r from-[#1b8cff] via-[#5b5cff] to-[#b84dff] px-3 py-2 text-sm font-bold text-white">Login</Link>
-              )}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </nav>
+          ) : (
+            <Link to="/login" onClick={() => setIsOpen(false)} className="btn-primary w-full justify-center py-2.5">
+              Sign In
+            </Link>
+          )}
+        </div>
+      </aside>
+    </>
   );
 };
 
@@ -569,7 +581,7 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login, loginWithGoogle } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: FormEvent) => {
@@ -600,17 +612,6 @@ const Login = () => {
           </div>
         )}
 
-        <button type="button" onClick={() => loginWithGoogle('/dashboard')} className="btn-secondary mb-5 w-full py-3">
-          <GoogleIcon />
-          Continue with Gmail
-        </button>
-
-        <div className="mb-5 flex items-center gap-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-          <div className="h-px flex-1 bg-white/10" />
-          Email login
-          <div className="h-px flex-1 bg-white/10" />
-        </div>
-
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-300">Email</label>
@@ -639,7 +640,7 @@ const SignUp = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { register, loginWithGoogle } = useAuth();
+  const { register } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: FormEvent) => {
@@ -669,17 +670,6 @@ const SignUp = () => {
             {error}
           </div>
         )}
-
-        <button type="button" onClick={() => loginWithGoogle('/dashboard')} className="btn-secondary mb-5 w-full py-3">
-          <GoogleIcon />
-          Continue with Gmail
-        </button>
-
-        <div className="mb-5 flex items-center gap-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-          <div className="h-px flex-1 bg-white/10" />
-          Email signup
-          <div className="h-px flex-1 bg-white/10" />
-        </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -1218,6 +1208,7 @@ const Dashboard = () => {
   const { user } = useAuth();
   const [items, setItems] = useState<any[]>([]);
   const [claims, setClaims] = useState<any[]>([]);
+  const [matches, setMatches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -1228,12 +1219,14 @@ const Dashboard = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [itemsRes, claimsRes] = await Promise.all([
+      const [itemsRes, claimsRes, matchesRes] = await Promise.all([
         apiCall('/api/items?limit=10'),
-        apiCall('/api/claims').catch(() => ({ claims: [] }))
+        apiCall('/api/claims').catch(() => ({ claims: [] })),
+        apiCall('/api/ai/matches/my').catch(() => [])
       ]);
       setItems(itemsRes.items || []);
       setClaims(claimsRes.claims || []);
+      setMatches(matchesRes || []);
     } catch (err) {}
     setLoading(false);
   };
@@ -1318,6 +1311,31 @@ const Dashboard = () => {
           )}
         </div>
 
+        <div className="glass-card p-5 sm:p-6 lg:col-span-2">
+          <div className="flex items-center gap-2 mb-4">
+            <Star className="h-5 w-5 text-[#b84dff]" />
+            <h2 className="text-lg font-semibold text-white">Suggested Matches</h2>
+          </div>
+          {matches.length === 0 ? (
+            <p className="py-8 text-center text-slate-400 italic">No AI suggestions at the moment. We'll notify you when a match is found!</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {matches.map((match: any) => (
+                <div key={match.id} className="flex flex-col justify-between gap-4 rounded-lg border border-[#b84dff]/30 bg-[#b84dff]/5 p-4 transition hover:bg-[#b84dff]/10">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold uppercase tracking-wider text-[#d8a7ff]">Potential Match ({match.confidence_score}%)</p>
+                    <p className="mt-2 text-sm text-slate-200">
+                      Your <span className="font-bold text-white">"{user.id === match.lost_user_id ? match.lost_title : match.found_title}"</span> might match 
+                      the <span className="font-bold text-white">"{user.id === match.lost_user_id ? match.found_title : match.lost_title}"</span> reported in the system.
+                    </p>
+                  </div>
+                  <Link to={`/items/${user.id === match.lost_user_id ? match.found_item_id : match.lost_item_id}`} className="btn-secondary w-full text-xs py-2">View Item Details</Link>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="glass-card p-5 sm:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-white">My Claims</h2>
@@ -1346,31 +1364,56 @@ const Dashboard = () => {
 const AdminDashboard = () => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     apiCall('/api/admin/dashboard').then(setData).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
+  const handleVerifyQR = async () => {
+    const claimId = window.prompt("Enter Claim ID (e.g. 1):");
+    if (!claimId) return;
+    const token = window.prompt("Enter QR Token:");
+    if (!token) return;
+    
+    try {
+      const res = await apiCall(`/api/claims/${claimId}/verify`, {
+        method: 'PUT',
+        body: JSON.stringify({ token })
+      });
+      alert(res.message || "Item released successfully!");
+      window.location.reload();
+    } catch (err: any) {
+      alert(err.message || "Verification failed");
+    }
+  };
+
   if (loading) return <div className="mx-auto max-w-7xl px-4 py-8"><div className="glass-card h-96 animate-pulse" /></div>;
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-8 overflow-hidden rounded-lg border border-white/10 bg-[#070b1a] p-6 text-white shadow-xl shadow-black/30 sm:p-8">
         <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div>
             <img src={logoUrl} alt="LostLink Brgy Paknaan" className="mb-5 h-auto w-56 object-contain" />
-            <p className="text-xs font-bold uppercase tracking-[0.26em] text-[#82b9ff]">Barangay operations</p>
-            <h1 className="editorial-heading mt-2 text-4xl leading-tight">Admin Dashboard</h1>
-            <p className="mt-2 max-w-xl text-sm leading-7 text-slate-400">System overview, report queues, and claim activity.</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#82b9ff]">Barangay operations</p>
+            <h1 className="editorial-heading mt-3 text-3xl sm:text-4xl leading-tight">Admin Dashboard</h1>
+            <p className="mt-3 max-w-xl text-sm leading-relaxed text-slate-400">Real-time system overview, active report queues, and verified claim activity for Barangay Paknaan.</p>
           </div>
-          <Link to="/reports" className="btn-primary w-full md:w-auto">
-            <Download className="h-4 w-4" />
-            Generate Report
-          </Link>
+           <div className="flex flex-col gap-3">
+            <button onClick={handleVerifyQR} className="btn-secondary w-full bg-[#19d7b7]/10 text-[#75f7df] border-[#19d7b7]/30 hover:bg-[#19d7b7]/20">
+              <Scan className="h-4 w-4" />
+              Verify QR Claim Slip
+            </button>
+            <Link to="/reports" className="btn-primary w-full">
+              <Download className="h-4 w-4" />
+              Generate Report
+            </Link>
+          </div>
         </div>
       </div>
 
-      <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
           { label: 'Total Users', value: data?.stats?.totalUsers || 0, icon: Users, color: 'blue' },
           { label: 'Pending Approvals', value: data?.stats?.pendingApprovals || 0, icon: Clock, color: 'amber' },
@@ -1391,31 +1434,130 @@ const AdminDashboard = () => {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="glass-card p-5 sm:p-6">
-          <h2 className="mb-4 text-lg font-semibold text-white">Category Distribution</h2>
-          <div className="space-y-3">
-            {(data?.categoryStats || []).map((cat: any, i: number) => (
-              <div key={i} className="flex items-center justify-between gap-4 rounded-lg border border-white/10 bg-white/10 px-3 py-2">
-                <span className="min-w-0 break-words text-slate-300">{cat.category}</span>
-                <span className="font-medium text-white">{cat.count}</span>
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 sm:gap-8">
+        {/* Lost vs Found Items Pie Chart */}
+        <div className="glass-card p-5 sm:p-6 xl:col-span-1">
+          <h2 className="mb-6 text-lg font-semibold text-white flex items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-[#ffb84d]" />
+            Lost vs Found Items
+          </h2>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-10">
+            <div className="relative h-36 w-36 shrink-0">
+              {(() => {
+                const lostCount = data?.typeStats?.find((s: any) => s.type === 'lost')?.count || 0;
+                const foundCount = data?.typeStats?.find((s: any) => s.type === 'found')?.count || 0;
+                const total = lostCount + foundCount;
+                const lostPercentage = total > 0 ? (lostCount / total) * 100 : 0;
+                const foundPercentage = total > 0 ? (foundCount / total) * 100 : 0;
+
+                return (
+                  <div 
+                    className="h-full w-full rounded-full" 
+                    style={{ 
+                      background: `conic-gradient(#ffb84d 0% ${lostPercentage}%, #19d7b7 ${lostPercentage}% 100%)` 
+                    }}
+                  />
+                );
+              })()}
+            </div>
+            <div className="space-y-3 w-full sm:w-auto">
+              <div className="flex items-center justify-between sm:justify-start gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="h-3 w-3 shrink-0 rounded-full bg-[#ffb84d]" />
+                  <span className="text-sm text-slate-300">Lost Items</span>
+                </div>
+                <span className="font-mono text-sm font-bold text-white">({data?.typeStats?.find((s: any) => s.type === 'lost')?.count || 0})</span>
               </div>
-            ))}
+              <div className="flex items-center justify-between sm:justify-start gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="h-3 w-3 shrink-0 rounded-full bg-[#19d7b7]" />
+                  <span className="text-sm text-slate-300">Found Items</span>
+                </div>
+                <span className="font-mono text-sm font-bold text-white">({data?.typeStats?.find((s: any) => s.type === 'found')?.count || 0})</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="glass-card p-5 sm:p-6">
-          <h2 className="mb-4 text-lg font-semibold text-white">Recent Activity</h2>
-          <div className="space-y-3">
-            {(data?.recentActivity || []).slice(0, 5).map((log: any, i: number) => (
-              <div key={i} className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/10 p-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="font-medium text-white">{log.action}</p>
-                  <p className="text-sm text-slate-400">{log.user_name || 'System'}</p>
+        {/* Top Categories Bar Graph */}
+        <div className="glass-card p-5 sm:p-6 xl:col-span-1">
+          <h2 className="mb-6 text-lg font-semibold text-white flex items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-[#82b9ff]" />
+            Top Categories
+          </h2>
+          <div className="space-y-5">
+            {(data?.categoryStats || []).slice(0, 5).map((cat: any, i: number) => {
+              const max = Math.max(...data.categoryStats.map((c: any) => c.count), 1);
+              const percentage = (cat.count / max) * 100;
+              return (
+                <div key={i}>
+                  <div className="mb-1 flex justify-between text-sm">
+                    <span className="text-slate-300 truncate pr-2">{cat.category}</span>
+                    <span className="font-mono text-white shrink-0">{cat.count}</span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${percentage}%` }}
+                      transition={{ duration: 1, delay: i * 0.1 }}
+                      className="h-full rounded-full bg-gradient-to-r from-[#1b8cff] to-[#82b9ff]" 
+                    />
+                  </div>
                 </div>
-                <span className="text-sm text-slate-400">{new Date(log.created_at).toLocaleDateString()}</span>
-              </div>
-            ))}
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Zone Distribution */}
+        <div className="glass-card p-5 sm:p-6 xl:col-span-1">
+          <h2 className="mb-4 text-lg font-semibold text-white">Reports by Zone (Purok)</h2>
+          <div className="space-y-4">
+            {(data?.zoneStats || []).slice(0, 6).map((zone: any, i: number) => {
+              const total = data.stats.totalLost + data.stats.totalFound;
+              const percentage = total > 0 ? (zone.count / total) * 100 : 0;
+              return (
+                <div key={i}>
+                  <div className="mb-1 flex justify-between text-sm">
+                    <span className="text-slate-300">{zone.zone || 'Unknown'}</span>
+                    <span className="font-mono text-white">{zone.count}</span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-white/5">
+                    <div 
+                      className="h-full rounded-full bg-[#19d7b7]" 
+                      style={{ width: `${percentage}%` }} 
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Activity Trend Chart */}
+        <div className="glass-card p-5 sm:p-6 lg:col-span-2 xl:col-span-3">
+          <h2 className="mb-6 text-lg font-semibold text-white flex items-center gap-2">
+            <TrendingUp className="h-5 w-5 text-[#82b9ff]" />
+            Weekly Report Volume
+          </h2>
+          <div className="flex h-48 items-end justify-between gap-2 px-2 pb-8 pt-4 overflow-x-auto">
+            {(data?.reportsTrend || []).map((day: any, i: number) => {
+              const max = Math.max(...data.reportsTrend.map((d: any) => d.count), 1);
+              const height = (day.count / max) * 100;
+              return (
+                <div key={i} className="group relative flex flex-1 flex-col items-center min-w-[40px]">
+                  <div 
+                    className="w-full max-w-[40px] rounded-t-md bg-gradient-to-t from-[#1b8cff]/40 to-[#1b8cff] transition-all group-hover:to-[#9dc4ff]" 
+                    style={{ height: `${height}%` }}
+                  >
+                    <div className="absolute -top-8 left-1/2 -translate-x-1/2 rounded bg-white px-2 py-1 text-[10px] font-bold text-[#050816] opacity-0 group-hover:opacity-100">
+                      {day.count}
+                    </div>
+                  </div>
+                  <span className="absolute -bottom-7 text-[10px] font-bold uppercase tracking-tighter text-slate-500">{day.day}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1734,6 +1876,104 @@ const ReportsPage = () => {
   );
 };
 
+const AdminDatabasePage = () => {
+  const [tab, setTab] = useState('users');
+  const [data, setData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      let res;
+      if (tab === 'users') {
+        res = await apiCall(`/api/admin/users?search=${encodeURIComponent(search)}`);
+        setData(res || []);
+      } else if (tab === 'items') {
+        res = await apiCall(`/api/items?search=${encodeURIComponent(search)}&status=all`);
+        setData(res.items || []);
+      } else if (tab === 'claims') {
+        res = await apiCall('/api/claims');
+        setData(res.claims || []);
+      } else if (tab === 'logs') {
+        res = await apiCall('/api/admin/logs');
+        setData(res || []);
+      }
+    } catch (err) {}
+    setLoading(false);
+  };
+
+  useEffect(() => { loadData(); }, [tab]);
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mb-8">
+        <div className="flex items-center gap-3">
+          <Database className="h-8 w-8 text-[#82b9ff]" />
+          <h1 className="text-3xl font-bold text-white">System Database</h1>
+        </div>
+        <p className="mt-1 text-slate-400">Master record management and activity history for Barangay Paknaan.</p>
+      </div>
+
+      <div className="glass-card mb-6 p-1">
+        <div className="flex flex-wrap gap-1">
+          {[
+            { id: 'users', label: 'Users', icon: Users },
+            { id: 'items', label: 'Reports', icon: Package },
+            { id: 'claims', label: 'Claims', icon: MessageSquare },
+            { id: 'logs', label: 'Activity Logs', icon: History },
+          ].map(t => (
+            <button key={t.id} onClick={() => { setTab(t.id); setSearch(''); }} className={cn("flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition-all", tab === t.id ? "bg-[#4f8cff] text-white" : "text-slate-300 hover:bg-white/10")}>
+              <t.icon className="h-4 w-4" />
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="glass-card mb-6 p-4">
+        <div className="flex gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+            <input type="text" placeholder={`Search ${tab}...`} value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadData()} className="form-field pl-10" />
+          </div>
+          <button onClick={loadData} className="btn-secondary px-6">Refresh</button>
+        </div>
+      </div>
+
+      {loading ? <div className="glass-card h-64 animate-pulse" /> : (
+        <div className="glass-card overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-white/10 text-xs font-bold uppercase tracking-wider text-slate-400">
+                <th className="px-6 py-4">ID</th>
+                {tab === 'users' && <><th className="px-6 py-4">Name</th><th className="px-6 py-4">Email</th><th className="px-6 py-4">Role</th></>}
+                {tab === 'items' && <><th className="px-6 py-4">Title</th><th className="px-6 py-4">Type</th><th className="px-6 py-4">Status</th></>}
+                {tab === 'claims' && <><th className="px-6 py-4">Claimant</th><th className="px-6 py-4">Item</th><th className="px-6 py-4">Status</th></>}
+                {tab === 'logs' && <><th className="px-6 py-4">User</th><th className="px-6 py-4">Action</th><th className="px-6 py-4">Details</th></>}
+                <th className="px-6 py-4">Date</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/10 text-sm">
+              {data.map(item => (
+                <tr key={item.id} className="text-slate-300 hover:bg-white/5 transition-colors">
+                  <td className="px-6 py-4 font-mono text-xs">#{item.id}</td>
+                  {tab === 'users' && <><td className="px-6 py-4 text-white font-bold">{item.name}</td><td className="px-6 py-4">{item.email}</td><td className="px-6 py-4"><span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] uppercase font-bold">{item.role}</span></td></>}
+                  {tab === 'items' && <><td className="px-6 py-4 text-white font-bold">{item.title}</td><td className="px-6 py-4 capitalize">{item.type}</td><td className="px-6 py-4"><StatusBadge status={item.status} /></td></>}
+                  {tab === 'claims' && <><td className="px-6 py-4 text-white font-bold">{item.claimant_name}</td><td className="px-6 py-4">{item.item_title}</td><td className="px-6 py-4"><StatusBadge status={item.status} /></td></>}
+                  {tab === 'logs' && <><td className="px-6 py-4 text-white font-bold">{item.user_name || 'System'}</td><td className="px-6 py-4 capitalize">{item.action.replace('_', ' ')}</td><td className="px-6 py-4 italic text-xs">{item.details || '-'}</td></>}
+                  <td className="px-6 py-4 whitespace-nowrap">{new Date(item.created_at).toLocaleDateString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {data.length === 0 && <div className="py-20 text-center text-slate-500 font-medium">No records found matching your criteria.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const ProfilePage = () => {
   const { user, completeGoogleLogin } = useAuth();
   const [form, setForm] = useState({ name: user?.name || '', contact_number: '', address: '', zone: user?.zone || '', photo_url: user?.photo_url || '' });
@@ -1856,9 +2096,10 @@ export default function App() {
 
   return (
     <Router>
-      <div className="min-h-screen bg-[#050816]">
-        <Navbar user={user} onLogout={logout} />
-        <Routes>
+      <div className="flex min-h-screen bg-[#050816]">
+        <Sidebar user={user} onLogout={logout} />
+        <main className="flex-1 md:pl-64">
+          <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<SignUp />} />
@@ -1869,15 +2110,17 @@ export default function App() {
           <Route path="/post" element={<ProtectedRoute><PostItemPage /></ProtectedRoute>} />
           <Route path="/claims/:itemId/submit" element={<ProtectedRoute><ClaimSubmitPage /></ProtectedRoute>} />
           <Route path="/claims/:id/qr" element={<ProtectedRoute><ClaimQRPage /></ProtectedRoute>} />
-          <Route path="/dashboard" element={<ProtectedRoute>{user?.role === 'admin' ? <AdminDashboard /> : <Dashboard />}</ProtectedRoute>} />
+          <Route path="/dashboard" element={<ProtectedRoute>{user?.role === 'resident' ? <Dashboard /> : <AdminDashboard />}</ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
           <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
           <Route path="/admin/reports" element={<ProtectedRoute roles={['admin', 'official']}><AdminReportsPage /></ProtectedRoute>} />
           <Route path="/admin/claims" element={<ProtectedRoute roles={['admin', 'official']}><ClaimReviewPage /></ProtectedRoute>} />
           <Route path="/admin/users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />
+          <Route path="/admin/database" element={<ProtectedRoute roles={['admin']}><AdminDatabasePage /></ProtectedRoute>} />
           <Route path="/reports" element={<ProtectedRoute roles={['admin', 'official']}><ReportsPage /></ProtectedRoute>} />
           <Route path="/unauthorized" element={<Unauthorized />} />
         </Routes>
+        </main>
       </div>
     </Router>
   );
