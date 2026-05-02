@@ -727,6 +727,15 @@ async function startServer() {
       return res.status(403).json({ error: 'Not authorized to delete this item' });
     }
 
+    const claims = await db.all('SELECT id FROM claims WHERE item_id = ?', [req.params.id]);
+    for (const claim of claims) {
+      await db.run('DELETE FROM qr_claim_slips WHERE claim_id = ?', [claim.id]);
+      await db.run('DELETE FROM suspicious_flags WHERE claim_id = ?', [claim.id]);
+      await db.run("DELETE FROM notifications WHERE reference_type = 'claim' AND reference_id = ?", [claim.id]);
+    }
+    await db.run('DELETE FROM claims WHERE item_id = ?', [req.params.id]);
+    await db.run('DELETE FROM ai_matches WHERE lost_item_id = ? OR found_item_id = ?', [req.params.id, req.params.id]);
+    await db.run("DELETE FROM notifications WHERE reference_type = 'item' AND reference_id = ?", [req.params.id]);
     await db.run('DELETE FROM items WHERE id = ?', [req.params.id]);
     await logActivity(req.user.id, 'delete_item', 'item', req.params.id, `Deleted item: ${item.title}`);
     res.json({ message: 'Item deleted successfully' });

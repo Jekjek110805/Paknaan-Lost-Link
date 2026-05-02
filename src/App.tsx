@@ -280,16 +280,14 @@ const Sidebar = ({
         </div>
 
         <div className={cn("flex-1 overflow-y-auto px-3 py-4 no-scrollbar", collapsed ? "space-y-4" : "space-y-8")}>
-          {user?.role !== 'admin' && (
-            <div className="space-y-1">
-              <p className={cn("px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500", collapsed && "sr-only")}>Main Menu</p>
-              {navLinks.map((link) => (
-                <div key={link.name}>
-                  <NavItem link={link} />
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="space-y-1">
+            <p className={cn("px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500", collapsed && "sr-only")}>Main Menu</p>
+            {navLinks.map((link) => (
+              <div key={link.name}>
+                <NavItem link={link} />
+              </div>
+            ))}
+          </div>
 
           {user && (
             <div className="space-y-1">
@@ -796,6 +794,7 @@ const ItemDetailPage = () => {
   const { id } = useParams();
   const [item, setItem] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
   const navigate = useNavigate();
   const { user } = useAuth();
 
@@ -807,6 +806,22 @@ const ItemDetailPage = () => {
 
   if (loading) return <div className="mx-auto max-w-4xl px-4 py-8"><div className="glass-card h-96 animate-pulse" /></div>;
   if (!item) return <EmptyState icon={Package} title="Item not found" message="This item may have been removed." action={<button onClick={() => navigate('/')} className="btn-secondary">Go Home</button>} />;
+
+  const canDeleteItem = user && (user.role === 'admin' || item.user_id === user.id);
+  const handleDeleteItem = async () => {
+    if (!canDeleteItem || deleting) return;
+    const confirmed = window.confirm(`Delete this ${item.type} item permanently? This action cannot be undone.`);
+    if (!confirmed) return;
+
+    setDeleting(true);
+    try {
+      await apiCall(`/api/items/${item.id}`, { method: 'DELETE' });
+      navigate(`/items/${item.type}`);
+    } catch (err: any) {
+      alert(err.message || 'Could not delete item');
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
@@ -864,11 +879,19 @@ const ItemDetailPage = () => {
               <User className="h-5 w-5 text-[#82b9ff]" />
               <span className="min-w-0 truncate text-slate-400">Reported by {item.reporter_name || 'Anonymous'}</span>
             </div>
-            {user && (item.status === 'posted' || item.status === 'matched') && (
-              <button onClick={() => navigate(`/claims/${item.id}/submit`)} className="btn-primary w-full sm:w-auto">
-                Claim This Item
-              </button>
-            )}
+            <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+              {user?.role === 'admin' && (
+                <button onClick={handleDeleteItem} disabled={deleting} className="btn-secondary w-full border-[#ff5c74]/40 bg-[#ff5c74]/10 text-[#ffa2ae] hover:bg-[#ff5c74]/20 sm:w-auto">
+                  <Trash2 className="h-5 w-5" />
+                  <span>{deleting ? 'Deleting...' : 'Delete Item'}</span>
+                </button>
+              )}
+              {user && user.role === 'resident' && (item.status === 'posted' || item.status === 'matched') && (
+                <button onClick={() => navigate(`/claims/${item.id}/submit`)} className="btn-primary w-full sm:w-auto">
+                  Claim This Item
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
