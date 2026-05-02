@@ -242,6 +242,12 @@ const STATUS_COLORS: any = {
   archived: 'border border-white/15 bg-white/10 text-slate-300',
 };
 
+const formatMatchScore = (score: unknown) => {
+  const numeric = Number(score);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '0%';
+  return `${Math.min(99, Math.max(1, Math.round(numeric * 100)))}%`;
+};
+
 const ADMIN_STAT_STYLES: Record<string, { bg: string; text: string }> = {
   blue: { bg: 'bg-[#1b8cff]/15', text: 'text-[#82b9ff]' },
   amber: { bg: 'bg-[#ffb84d]/15', text: 'text-[#ffd08a]' },
@@ -2447,7 +2453,7 @@ const ImageMatchPage = () => {
                       <span className={cn("mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-bold uppercase", item.type === 'lost' ? "border-[#ffb84d]/30 bg-[#ffb84d]/15 text-[#ffd08a]" : "border-[#19d7b7]/30 bg-[#19d7b7]/15 text-[#75f7df]")}>{item.type}</span>
                     </div>
                     <span className="shrink-0 rounded-full border border-[#4f8cff]/30 bg-[#4f8cff]/15 px-2 py-1 text-xs font-bold text-[#9dc4ff]">
-                      {Math.round((item.similarity_score || 0) * 100)}%
+                      {formatMatchScore(item.similarity_score)}
                     </span>
                   </div>
                   <p className="line-clamp-2 text-sm text-slate-400">{item.description}</p>

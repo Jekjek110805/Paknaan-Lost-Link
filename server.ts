@@ -242,6 +242,26 @@ async function describeImageWithGemini(file: any, context = '') {
   return response.text?.trim() || null;
 }
 
+async function describeImageWithGeminiUrl(imageUrl: string, context = '') {
+  if (!geminiApiKey || !imageUrl) return null;
+
+  const { GoogleGenAI } = await import("@google/genai");
+  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+  const response = await ai.models.generateContent({
+    model: GEMINI_VISION_MODEL,
+    contents: [
+      {
+        fileData: {
+          mimeType: 'image/jpeg',
+          fileUri: imageUrl,
+        },
+      },
+      `Describe this lost-and-found item for visual search. Focus on object type, colors, brand text, shape, materials, visible labels, damage, and distinctive details. Return one compact searchable paragraph. ${context}`,
+    ],
+  });
+  return response.text?.trim() || null;
+}
+
 async function createGeminiEmbedding(text: string) {
   if (!geminiApiKey) return null;
 
@@ -254,6 +274,27 @@ async function createGeminiEmbedding(text: string) {
   const embedding = response.embeddings?.[0]?.values || response.embedding?.values || response.values;
   return Array.isArray(embedding) ? embedding as number[] : null;
 }
+
+const tokenizeForMatch = (text: string) => new Set((text.toLowerCase().match(/[a-z0-9]+/g) || [])
+  .filter(token => token.length > 2 && !['the', 'and', 'with', 'this', 'that', 'item', 'photo', 'uploaded', 'lost', 'found', 'report'].includes(token)));
+
+const textTokenSimilarity = (a: string, b: string) => {
+  const setA = tokenizeForMatch(a);
+  const setB = tokenizeForMatch(b);
+  if (!setA.size || !setB.size) return 0;
+  let intersection = 0;
+  setA.forEach(token => {
+    if (setB.has(token)) intersection++;
+  });
+  return intersection / Math.max(setA.size, setB.size);
+};
+
+const calibrateSimilarityScore = (rawScore: number, tokenScore: number) => {
+  const normalizedRaw = Math.max(0, Math.min(1, rawScore));
+  const normalizedToken = Math.max(0, Math.min(1, tokenScore));
+  const boostedVector = normalizedRaw <= 0 ? 0 : Math.sqrt(normalizedRaw);
+  return Math.max(boostedVector, normalizedToken);
+};
 
 async function describeImage(imageUrl: string, context = '', file?: any) {
   if (!OPENAI_API_KEY) {
@@ -348,8 +389,13 @@ async function getItemSearchEmbedding(item: any) {
     }
   }
 
-  const visualDescription = item.visual_description || [item.title, item.description, item.category, item.location].filter(Boolean).join('\n');
-  const embedding = await createEmbedding(visualDescription);
+  const context = `Known item details: title="${item.title || ''}", type="${item.type || ''}", category="${item.category || ''}", description="${item.description || ''}", location="${item.location || ''}".`;
+  const imageDescription = item.image_url && /^https?:\/\//i.test(item.image_url)
+    ? await describeImageWithGeminiUrl(item.image_url, context).catch(() => null)
+    : null;
+  const visualDescription = imageDescription || item.visual_description || context;
+  const searchableText = [item.title, item.description, item.category, item.location, visualDescription].filter(Boolean).join('\n');
+  const embedding = await createEmbedding(searchableText);
   await updateItemEmbedding(item.id, visualDescription, embedding);
   return embedding;
 }
@@ -1093,13 +1139,14 @@ async function startServer() {
 
       const imageUrl = await uploadImageFile(req.file);
       const visualDescription = await describeImage(imageUrl, '', req.file);
-      const embedding = await createEmbedding(visualDescription);
+      const queryText = visualDescription;
+      const embedding = await createEmbedding(queryText);
       let matches: any[] = [];
 
       if (db.type === 'postgres' && pgVectorReady) {
         matches = await db.all(`
           SELECT id, title, description, type, category, location, image_url, visual_description,
-            1 - (embedding_vector <=> ?::vector) AS similarity_score
+            1 - (embedding_vector <=> ?::vector) AS vector_score
           FROM items
           WHERE type IN ('lost', 'found')
             AND status IN ('posted', 'approved', 'matched', 'pending')
@@ -1119,7 +1166,10 @@ async function startServer() {
           const itemEmbedding = await getItemSearchEmbedding(item);
           if (!itemEmbedding.length) continue;
           const { embedding_json, ...publicItem } = item;
-          scoredMatches.push({ ...publicItem, similarity_score: cosineSimilarity(embedding, itemEmbedding) });
+          const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
+          const vectorScore = cosineSimilarity(embedding, itemEmbedding);
+          const tokenScore = textTokenSimilarity(queryText, itemText);
+          scoredMatches.push({ ...publicItem, vector_score: vectorScore, token_score: tokenScore, similarity_score: calibrateSimilarityScore(vectorScore, tokenScore) });
         }
         matches = scoredMatches
           .sort((a: any, b: any) => b.similarity_score - a.similarity_score)
@@ -1140,19 +1190,39 @@ async function startServer() {
           const itemEmbedding = await getItemSearchEmbedding(item);
           if (!itemEmbedding.length) continue;
           const { embedding_json, ...publicItem } = item;
-          scoredMatches.push({ ...publicItem, similarity_score: cosineSimilarity(embedding, itemEmbedding) });
+          const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
+          const vectorScore = cosineSimilarity(embedding, itemEmbedding);
+          const tokenScore = textTokenSimilarity(queryText, itemText);
+          scoredMatches.push({ ...publicItem, vector_score: vectorScore, token_score: tokenScore, similarity_score: calibrateSimilarityScore(vectorScore, tokenScore) });
         }
         matches = scoredMatches
           .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
           .slice(0, 5);
       }
 
+      matches = matches
+        .map((item: any) => {
+          const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
+          const vectorScore = Number(item.vector_score ?? item.similarity_score ?? 0);
+          const tokenScore = Number(item.token_score ?? textTokenSimilarity(queryText, itemText));
+          return {
+            ...item,
+            vector_score: vectorScore,
+            token_score: tokenScore,
+            similarity_score: calibrateSimilarityScore(vectorScore, tokenScore),
+          };
+        })
+        .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
+        .slice(0, 5);
+
       res.json({
         query_image_url: imageUrl,
         query_description: visualDescription,
         matches: matches.map((item: any) => ({
           ...item,
-          similarity_score: Number(item.similarity_score || 0),
+          similarity_score: Number(item.similarity_score ?? calibrateSimilarityScore(Number(item.vector_score || 0), 0)),
+          vector_score: Number(item.vector_score || 0),
+          token_score: Number(item.token_score || 0),
         })),
       });
     } catch (error: any) {
