@@ -21,6 +21,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'paknaan-secret-key-change-in-produ
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
 const OPENAI_EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
+const GEMINI_VISION_MODEL = process.env.GEMINI_VISION_MODEL || 'gemini-2.5-flash';
+const GEMINI_EMBEDDING_MODEL = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || process.env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
@@ -226,7 +228,7 @@ async function describeImageWithGemini(file: any, context = '') {
   const { GoogleGenAI } = await import("@google/genai");
   const ai = new GoogleGenAI({ apiKey: geminiApiKey });
   const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: GEMINI_VISION_MODEL,
     contents: [
       {
         inlineData: {
@@ -238,6 +240,19 @@ async function describeImageWithGemini(file: any, context = '') {
     ],
   });
   return response.text?.trim() || null;
+}
+
+async function createGeminiEmbedding(text: string) {
+  if (!geminiApiKey) return null;
+
+  const { GoogleGenAI } = await import("@google/genai");
+  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+  const response: any = await ai.models.embedContent({
+    model: GEMINI_EMBEDDING_MODEL,
+    contents: text,
+  });
+  const embedding = response.embeddings?.[0]?.values || response.embedding?.values || response.values;
+  return Array.isArray(embedding) ? embedding as number[] : null;
 }
 
 async function describeImage(imageUrl: string, context = '', file?: any) {
@@ -284,7 +299,7 @@ async function describeImage(imageUrl: string, context = '', file?: any) {
 
 async function createEmbedding(text: string) {
   if (!OPENAI_API_KEY) {
-    return createLocalEmbedding(text);
+    return await createGeminiEmbedding(text) || createLocalEmbedding(text);
   }
 
   const response = await fetch('https://api.openai.com/v1/embeddings', {
@@ -301,8 +316,8 @@ async function createEmbedding(text: string) {
 
   const data: any = await response.json().catch(() => ({}));
   if (!response.ok) {
-    console.warn('OpenAI embedding request failed, using local embedding fallback:', data.error?.message || response.statusText);
-    return createLocalEmbedding(text);
+    console.warn('OpenAI embedding request failed, using Gemini/local fallback:', data.error?.message || response.statusText);
+    return await createGeminiEmbedding(text) || createLocalEmbedding(text);
   }
   const embedding = data.data?.[0]?.embedding;
   if (!Array.isArray(embedding)) throw new Error('OpenAI did not return an embedding.');
