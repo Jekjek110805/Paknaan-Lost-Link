@@ -467,6 +467,22 @@ const ItemImage = ({ item, className, fallbackClassName = 'relative flex h-16 w-
   );
 };
 
+const ProofPreview = ({ url, alt = 'Claim proof', className = 'h-full w-full object-contain' }: { url: string; alt?: string; className?: string }) => {
+  const [failed, setFailed] = useState(false);
+  const isLegacyLocalUpload = url?.startsWith('/uploads/');
+
+  if (!url || failed || isLegacyLocalUpload) {
+    return (
+      <div className="flex h-full min-h-48 flex-col items-center justify-center gap-3 rounded-lg border border-white/10 bg-[#070b1a] p-6 text-center text-slate-400">
+        <FileText className="h-10 w-10 text-slate-500" />
+        <p className="text-sm">{isLegacyLocalUpload ? 'This proof was saved to local uploads and is not available on Vercel.' : 'Proof preview is unavailable.'}</p>
+      </div>
+    );
+  }
+
+  return <img src={url} alt={alt} className={className} onError={() => setFailed(true)} />;
+};
+
 const ItemCard = ({ item, onClick }: { item: any, onClick?: () => void }) => (
   <motion.div whileHover={{ y: -3 }} className="glass-card group flex h-full cursor-pointer flex-col overflow-hidden transition-shadow hover:shadow-xl hover:shadow-[#1b8cff]/15" onClick={onClick}>
     <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-[#070b1a]">
@@ -1799,6 +1815,7 @@ const AdminReportsPage = () => {
 const ClaimReviewPage = () => {
   const [claims, setClaims] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [proofClaim, setProofClaim] = useState<any>(null);
 
   const loadClaims = async () => {
     setLoading(true);
@@ -1848,7 +1865,11 @@ const ClaimReviewPage = () => {
                 <h2 className="break-words text-lg font-bold text-white">{claim.item_title}</h2>
                 <p className="mt-1 text-sm text-slate-400">Claimant: {claim.claimant_name || 'Unknown'}</p>
                 <p className="mt-1 line-clamp-2 text-sm text-slate-500">{claim.message}</p>
-                {claim.proof_url && <a href={claim.proof_url} target="_blank" className="mt-2 inline-flex text-sm font-semibold text-[#9dc4ff]">View proof</a>}
+                {claim.proof_url && (
+                  <button type="button" onClick={() => setProofClaim(claim)} className="mt-2 inline-flex text-sm font-semibold text-[#9dc4ff]">
+                    View proof
+                  </button>
+                )}
               </div>
               <div className="flex flex-wrap gap-2 lg:justify-end">
                 {(claim.status === 'pending' || claim.status === 'under_review') && <button onClick={() => decideClaim(claim, 'approve')} className="btn-primary px-3 py-2">Approve</button>}
@@ -1857,6 +1878,30 @@ const ClaimReviewPage = () => {
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {proofClaim && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm" onClick={() => setProofClaim(null)}>
+          <div className="glass-card max-h-[90vh] w-full max-w-3xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3 border-b border-white/10 p-4">
+              <div className="min-w-0">
+                <h2 className="truncate text-lg font-bold text-white">Claim Proof</h2>
+                <p className="truncate text-sm text-slate-400">{proofClaim.item_title}</p>
+              </div>
+              <button type="button" onClick={() => setProofClaim(null)} className="rounded-lg p-2 text-slate-300 hover:bg-white/10 hover:text-white" aria-label="Close proof viewer">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="max-h-[70vh] overflow-auto bg-[#050816] p-4">
+              <ProofPreview url={proofClaim.proof_url} alt={`Proof for ${proofClaim.item_title}`} className="mx-auto max-h-[66vh] w-auto max-w-full object-contain" />
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-white/10 p-4">
+              {proofClaim.proof_url && !proofClaim.proof_url.startsWith('/uploads/') && (
+                <a href={proofClaim.proof_url} target="_blank" rel="noreferrer" className="btn-secondary px-3 py-2">Open in new tab</a>
+              )}
+              <button type="button" onClick={() => setProofClaim(null)} className="btn-primary px-3 py-2">Done</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -1441,7 +1441,7 @@ async function startServer() {
 
   app.post('/api/claims', authenticateToken, upload.single('proof'), async (req: any, res) => {
     const { item_id, message, proof_type, proof_url, facebook_url } = req.body;
-    const uploadedProofUrl = getUploadedFileUrl(req.file) || proof_url;
+    const uploadedProofUrl = req.file ? await uploadImageFile(req.file) : proof_url;
     
     const parsedItemId = parseInt(String(item_id));
     const item = await db.get('SELECT * FROM items WHERE id = ?', [parsedItemId]);
