@@ -1,5 +1,13 @@
 {
   "version": 2,
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "server.ts"
+    },
+    "api/debug-server.ts": {
+      "includeFiles": "server.ts"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/health",
