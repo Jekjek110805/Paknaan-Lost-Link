@@ -55,6 +55,17 @@ async function apiCall(endpoint: string, options: any = {}) {
   return data;
 }
 
+async function apiFormCall(endpoint: string, formData: FormData, options: any = {}) {
+  const token = localStorage.getItem('token');
+  const headers: any = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${API_URL}${endpoint}`, { ...options, method: options.method || 'POST', headers, body: formData });
+  const data = await parseApiResponse(res);
+  if (!res.ok) throw new Error(data.error || data.message || data.details || `Request failed (${res.status})`);
+  return data;
+}
+
 async function uploadImage(file: File) {
   const token = localStorage.getItem('token');
   const formData = new FormData();
@@ -963,11 +974,19 @@ const PostItemPage = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      const imageUrl = selectedImage ? await uploadImage(selectedImage) : undefined;
-      await apiCall('/api/items', {
-        method: 'POST',
-        body: JSON.stringify({ ...form, type, image_url: imageUrl })
-      });
+      if (selectedImage) {
+        const formData = new FormData();
+        Object.entries({ ...form, type }).forEach(([key, value]) => {
+          formData.append(key, String(value ?? ''));
+        });
+        formData.append('image', selectedImage);
+        await apiFormCall('/api/items', formData);
+      } else {
+        await apiCall('/api/items', {
+          method: 'POST',
+          body: JSON.stringify({ ...form, type })
+        });
+      }
       navigate('/dashboard');
     } catch (err: any) {
       alert(err.message || 'Failed to submit');

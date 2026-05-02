@@ -491,7 +491,7 @@ dbInitPromise = initDb().then(() => {
 
 async function startServer() {
   app.use(async (req, res, next) => {
-    if (req.path === '/api/constants') return next();
+    if (req.path === '/api/constants' || req.path === '/api/upload/image') return next();
     if (!dbInitialized) await dbInitPromise;
     if (dbInitError && req.path.startsWith('/api') && req.path !== '/api/constants') {
       const detail = dbInitError instanceof Error ? dbInitError.message : String(dbInitError);
@@ -668,7 +668,7 @@ async function startServer() {
     res.json(item);
   });
 
-  app.post('/api/items', authenticateToken, async (req: any, res) => {
+  app.post('/api/items', authenticateToken, upload.single('image'), async (req: any, res) => {
     const { 
       title, description, type, category, location, purok, zone,
       date_lost, date_found, contact_preference, additional_contact,
@@ -676,6 +676,12 @@ async function startServer() {
       image_url, facebook_url
     } = req.body;
     const itemZone = zone || purok || 'Outside Barangay Paknaan';
+    const uploadedImageUrl = req.file
+      ? (IS_VERCEL
+          ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
+          : `/uploads/${req.file.filename}`)
+      : image_url;
+    const willTurnOver = turnover_to_barangay === true || turnover_to_barangay === 'true' || turnover_to_barangay === '1';
     
     if (!title || !description || !type || !category || !location || !itemZone ) {
       return res.status(400).json({ error: 'All required fields must be filled' });
@@ -688,7 +694,7 @@ async function startServer() {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
     `, [title, description, type, category, location, itemZone, date_lost, date_found, 
       contact_preference || 'message', additional_contact, finder_name, finder_contact, 
-      Boolean(turnover_to_barangay), storage_location, image_url || null, facebook_url || null, req.user.id]);
+      willTurnOver, storage_location, uploadedImageUrl || null, facebook_url || null, req.user.id]);
 
     await logActivity(req.user.id, 'create_item', 'item', result.lastID, `Created ${type} item: ${title}`);
     res.status(201).json({ message: 'Item reported successfully', id: result.lastID });
