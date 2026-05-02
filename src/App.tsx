@@ -2456,7 +2456,7 @@ const ImageMatchPage = () => {
 
         <div className="glass-card p-5">
           <h2 className="text-xl font-bold text-white">Search Guide</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-400">The system uses visual image matching when the CLIP service is configured, then falls back to AI descriptions and text signals.</p>
+          <p className="mt-2 text-sm leading-6 text-slate-400">The system uses Vertex AI or CLIP visual matching when configured, then falls back to AI descriptions and text signals.</p>
           <div className="mt-4 grid gap-3">
             <div className="rounded-lg border border-[#ffb84d]/25 bg-[#ffb84d]/10 p-4">
               <div className="text-sm font-bold text-[#ffd08a]">Lost reports</div>

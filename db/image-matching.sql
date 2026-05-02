@@ -17,7 +17,7 @@ CREATE INDEX IF NOT EXISTS items_clip_embedding_vector_idx
   USING ivfflat (clip_embedding_vector vector_cosine_ops)
   WITH (lists = 100);
 
--- CLIP image-to-image cosine similarity search.
+-- Vertex AI or CLIP image-to-image cosine similarity search.
 -- Replace :clip_query_embedding with a vector(512) literal such as '[0.01,-0.02,...]'.
 SELECT
   id,

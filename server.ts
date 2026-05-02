@@ -23,6 +23,10 @@ const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
 const OPENAI_EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
 const GEMINI_VISION_MODEL = process.env.GEMINI_VISION_MODEL || 'gemini-2.5-flash';
 const GEMINI_EMBEDDING_MODEL = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
+const VERTEX_AI_PROJECT_ID = process.env.VERTEX_AI_PROJECT_ID;
+const VERTEX_AI_LOCATION = process.env.VERTEX_AI_LOCATION || 'us-central1';
+const VERTEX_AI_MODEL = process.env.VERTEX_AI_MODEL || 'multimodalembedding@001';
+const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 const CLIP_SERVICE_URL = process.env.CLIP_SERVICE_URL?.replace(/\/+$/, '');
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || process.env.VITE_CLOUDINARY_UPLOAD_PRESET;
@@ -41,6 +45,7 @@ let pool: any = null;
 let db: any = null;
 let pgVectorReady = false;
 let clipVectorReady = false;
+let googleAccessTokenCache: { token: string; expiresAt: number } | null = null;
 
 if (USE_POSTGRES) {
   pool = new pg.Pool({
@@ -201,6 +206,64 @@ const getUploadedFileUrl = (file?: any) => {
     : `/uploads/${filename}`;
 };
 
+const base64Url = (input: string | Buffer) => Buffer.from(input)
+  .toString('base64')
+  .replace(/=/g, '')
+  .replace(/\+/g, '-')
+  .replace(/\//g, '_');
+
+function getGoogleServiceAccount() {
+  if (!GOOGLE_SERVICE_ACCOUNT_JSON) return null;
+  const raw = GOOGLE_SERVICE_ACCOUNT_JSON.trim();
+  const jsonText = raw.startsWith('{')
+    ? raw
+    : Buffer.from(raw, 'base64').toString('utf8');
+  return JSON.parse(jsonText);
+}
+
+async function getGoogleAccessToken() {
+  if (googleAccessTokenCache && googleAccessTokenCache.expiresAt > Date.now() + 60_000) {
+    return googleAccessTokenCache.token;
+  }
+
+  const serviceAccount = getGoogleServiceAccount();
+  if (!serviceAccount?.client_email || !serviceAccount?.private_key) {
+    throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is required for Vertex AI matching.');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    iss: serviceAccount.client_email,
+    scope: 'https://www.googleapis.com/auth/cloud-platform',
+    aud: 'https://oauth2.googleapis.com/token',
+    exp: now + 3600,
+    iat: now,
+  };
+  const unsignedJwt = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(payload))}`;
+  const signature = crypto.sign('RSA-SHA256', Buffer.from(unsignedJwt), serviceAccount.private_key);
+  const assertion = `${unsignedJwt}.${base64Url(signature)}`;
+
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }),
+  });
+  const data: any = await response.json().catch(() => ({}));
+  if (!response.ok || !data.access_token) {
+    throw new Error(data.error_description || data.error || 'Google access token request failed');
+  }
+
+  googleAccessTokenCache = {
+    token: data.access_token,
+    expiresAt: Date.now() + Number(data.expires_in || 3600) * 1000,
+  };
+  return googleAccessTokenCache.token;
+}
+
 async function uploadImageFile(file: any) {
   if (!file) return null;
   if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_UPLOAD_PRESET) {
@@ -243,6 +306,57 @@ async function createClipImageEmbedding(file: any) {
   const embedding = data.embedding;
   if (!Array.isArray(embedding)) throw new Error('CLIP service did not return an embedding.');
   return embedding as number[];
+}
+
+async function createVertexImageEmbedding(file: any, text = '') {
+  if (!VERTEX_AI_PROJECT_ID || !GOOGLE_SERVICE_ACCOUNT_JSON || !file?.buffer) return null;
+
+  const accessToken = await getGoogleAccessToken();
+  const endpoint = `https://${VERTEX_AI_LOCATION}-aiplatform.googleapis.com/v1/projects/${VERTEX_AI_PROJECT_ID}/locations/${VERTEX_AI_LOCATION}/publishers/google/models/${VERTEX_AI_MODEL}:predict`;
+  const instance: any = {
+    image: {
+      bytesBase64Encoded: file.buffer.toString('base64'),
+      mimeType: file.mimetype || 'image/jpeg',
+    },
+  };
+  if (text.trim()) instance.text = text.trim();
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      instances: [instance],
+      parameters: { dimension: 512 },
+    }),
+  });
+  const data: any = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error?.message || 'Vertex AI multimodal embedding failed');
+  }
+
+  const prediction = data.predictions?.[0];
+  const embedding = prediction?.imageEmbedding || prediction?.embedding || prediction?.embeddings;
+  if (!Array.isArray(embedding)) throw new Error('Vertex AI did not return an image embedding.');
+  return embedding as number[];
+}
+
+async function createManagedImageEmbedding(file: any, text = '') {
+  const vertexEmbedding = await createVertexImageEmbedding(file, text).catch((error: any) => {
+    console.warn('Vertex AI embedding failed. Trying CLIP service:', error?.message || error);
+    return null;
+  });
+  if (vertexEmbedding) return { provider: 'vertex', embedding: vertexEmbedding };
+
+  const clipEmbedding = await createClipImageEmbedding(file).catch((error: any) => {
+    console.warn('CLIP image embedding failed. Falling back to Gemini/text:', error?.message || error);
+    return null;
+  });
+  if (clipEmbedding) return { provider: 'clip', embedding: clipEmbedding };
+
+  return null;
 }
 
 async function describeImageWithGemini(file: any, context = '') {
@@ -1226,10 +1340,7 @@ async function startServer() {
       );
       const searchableText = [title, description, location, visualDescription].filter(Boolean).join('\n');
       const embedding = await createEmbedding(searchableText);
-      const clipEmbedding = await createClipImageEmbedding(req.file).catch((error: any) => {
-        console.warn('CLIP indexing failed. Continuing with text embedding:', error?.message || error);
-        return null;
-      });
+      const imageEmbedding = await createManagedImageEmbedding(req.file, searchableText);
 
       const result = await db.run(`
         INSERT INTO items (title, description, type, category, location, purok, image_url, user_id, status, visual_description, embedding_json)
@@ -1245,7 +1356,7 @@ async function startServer() {
         JSON.stringify(embedding),
       ]);
       await updateItemEmbedding(result.lastID, visualDescription, embedding);
-      if (clipEmbedding) await updateItemClipEmbedding(result.lastID, clipEmbedding);
+      if (imageEmbedding) await updateItemClipEmbedding(result.lastID, imageEmbedding.embedding);
       await logActivity(req.user.id, 'create_image_match_item', 'item', result.lastID, `Created found item with image matching: ${title}`);
 
       res.status(201).json({
@@ -1271,10 +1382,8 @@ async function startServer() {
       const visualDescription = await describeImage(imageUrl, '', req.file);
       const queryText = visualDescription;
       const embedding = await createEmbedding(queryText);
-      const clipEmbedding = await createClipImageEmbedding(req.file).catch((error: any) => {
-        console.warn('CLIP query embedding failed. Falling back to Gemini/text matching:', error?.message || error);
-        return null;
-      });
+      const imageEmbedding = await createManagedImageEmbedding(req.file, queryText);
+      const clipEmbedding = imageEmbedding?.embedding || null;
       let matches: any[] = [];
 
       if (clipEmbedding && db.type === 'postgres' && clipVectorReady) {
