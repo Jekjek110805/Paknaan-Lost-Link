@@ -296,6 +296,79 @@ const calibrateSimilarityScore = (rawScore: number, tokenScore: number) => {
   return Math.max(boostedVector, normalizedToken);
 };
 
+async function rerankMatchesWithGemini(file: any, queryDescription: string, matches: any[]) {
+  if (!geminiApiKey || !file?.buffer || !file?.mimetype || matches.length === 0) return matches;
+
+  try {
+    const { GoogleGenAI, Type } = await import("@google/genai");
+    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+    const candidates = matches.slice(0, 10).map((item: any, index: number) => ({
+      index,
+      id: item.id,
+      type: item.type,
+      title: item.title,
+      category: item.category,
+      description: item.description,
+      location: item.location,
+      visual_description: item.visual_description,
+      current_score: item.similarity_score,
+    }));
+
+    const response = await ai.models.generateContent({
+      model: GEMINI_VISION_MODEL,
+      contents: [
+        {
+          inlineData: {
+            mimeType: file.mimetype,
+            data: file.buffer.toString('base64'),
+          },
+        },
+        `You are reranking lost-and-found search results using the query photo and candidate item records.
+Query visual description: ${queryDescription}
+
+Candidates:
+${JSON.stringify(candidates)}
+
+Score each candidate from 0 to 1 based on whether it is likely the same physical item. Prioritize object type first, then color, brand/text, shape, material, and distinctive marks. Penalize different object types heavily even if colors match. Return JSON only.`,
+      ],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              score: { type: Type.NUMBER },
+              reason: { type: Type.STRING },
+            },
+            required: ['id', 'score'],
+          },
+        },
+      },
+    });
+
+    const scored = JSON.parse(response.text || '[]') as Array<{ id: string | number; score?: number; reason?: string }>;
+    const scoreById = new Map<string, { id: string | number; score?: number; reason?: string }>(scored.map((item) => [String(item.id), item]));
+    return matches
+      .map((item: any) => {
+        const aiScore = scoreById.get(String(item.id));
+        if (!aiScore) return item;
+        const normalizedAiScore = Math.max(0, Math.min(1, Number(aiScore.score || 0)));
+        return {
+          ...item,
+          ai_score: normalizedAiScore,
+          match_reason: aiScore.reason,
+          similarity_score: Math.max(Number(item.similarity_score || 0) * 0.35 + normalizedAiScore * 0.65, normalizedAiScore),
+        };
+      })
+      .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0));
+  } catch (error: any) {
+    console.warn('Gemini rerank failed. Keeping vector results:', error?.message || error);
+    return matches;
+  }
+}
+
 async function describeImage(imageUrl: string, context = '', file?: any) {
   if (!OPENAI_API_KEY) {
     const geminiDescription = await describeImageWithGemini(file, context);
@@ -1152,7 +1225,7 @@ async function startServer() {
             AND status IN ('posted', 'approved', 'matched', 'pending')
             AND embedding_vector IS NOT NULL
           ORDER BY embedding_vector <=> ?::vector
-          LIMIT 5
+          LIMIT 12
         `, [vectorToSql(embedding), vectorToSql(embedding)]);
       } else {
         const candidates = await db.all(`
@@ -1173,7 +1246,7 @@ async function startServer() {
         }
         matches = scoredMatches
           .sort((a: any, b: any) => b.similarity_score - a.similarity_score)
-          .slice(0, 5);
+          .slice(0, 12);
       }
 
       if (db.type === 'postgres' && pgVectorReady && matches.length < 5) {
@@ -1197,7 +1270,7 @@ async function startServer() {
         }
         matches = scoredMatches
           .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
-          .slice(0, 5);
+          .slice(0, 12);
       }
 
       matches = matches
@@ -1213,6 +1286,11 @@ async function startServer() {
           };
         })
         .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
+        .slice(0, 12);
+
+      matches = await rerankMatchesWithGemini(req.file, queryText, matches);
+      matches = matches
+        .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
         .slice(0, 5);
 
       res.json({
@@ -1223,6 +1301,8 @@ async function startServer() {
           similarity_score: Number(item.similarity_score ?? calibrateSimilarityScore(Number(item.vector_score || 0), 0)),
           vector_score: Number(item.vector_score || 0),
           token_score: Number(item.token_score || 0),
+          ai_score: item.ai_score === undefined ? null : Number(item.ai_score || 0),
+          match_reason: item.match_reason || null,
         })),
       });
     } catch (error: any) {

@@ -2410,7 +2410,7 @@ const ImageMatchPage = () => {
         </div>
 
         <div className="glass-card p-5">
-          <h2 className="text-xl font-bold text-white">Search Scope</h2>
+          <h2 className="text-xl font-bold text-white">Search Guide</h2>
           <div className="mt-4 grid gap-3">
             <div className="rounded-lg border border-[#ffb84d]/25 bg-[#ffb84d]/10 p-4">
               <div className="text-sm font-bold text-[#ffd08a]">Lost reports</div>
@@ -2421,7 +2421,16 @@ const ImageMatchPage = () => {
               <p className="mt-1 text-sm text-slate-300">Matches can also point to stored or posted found items.</p>
             </div>
           </div>
-          <p className="mt-4 text-sm leading-6 text-slate-400">The captured photo is used only as a temporary search reference. It is not saved as a new item from this page.</p>
+          <div className="mt-4 rounded-lg border border-white/10 bg-white/5 p-4">
+            <div className="text-sm font-bold text-white">For better matches</div>
+            <ul className="mt-2 space-y-2 text-sm leading-6 text-slate-300">
+              <li>Use one item per photo.</li>
+              <li>Keep the item centered and well lit.</li>
+              <li>Capture logos, color, strap, scratches, or unique marks.</li>
+              <li>Avoid blurry photos and busy backgrounds.</li>
+            </ul>
+          </div>
+          <p className="mt-4 text-sm leading-6 text-slate-400">The captured photo is only a temporary search reference. It is not saved as a new report from this page.</p>
         </div>
       </div>
 
@@ -2457,6 +2466,7 @@ const ImageMatchPage = () => {
                     </span>
                   </div>
                   <p className="line-clamp-2 text-sm text-slate-400">{item.description}</p>
+                  {item.match_reason && <p className="line-clamp-2 text-xs text-[#cfe2ff]">{item.match_reason}</p>}
                   <p className="text-xs text-slate-500">{item.location}</p>
                 </div>
               </Link>
