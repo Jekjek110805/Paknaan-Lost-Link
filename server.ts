@@ -1237,15 +1237,13 @@ async function startServer() {
       }
     });
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
-    });
+    // In production on Vercel, static files and SPA fallback are handled by vercel.json.
+    // This server instance will primarily serve API routes.
+    // No explicit static serving or catch-all route needed here for Vercel.
   }
 
   app.listen(PORT, () => {
     console.log(`Server running at http://localhost:${PORT}`);
   });
 }
-
 startServer();
