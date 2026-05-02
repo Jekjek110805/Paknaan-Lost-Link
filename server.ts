@@ -155,7 +155,10 @@ function createPostgresDb() {
     },
     run: async (sql: string, params: any[] = []) => {
       const pgSql = toPgSql(sql);
-      const querySql = pgSql.trim().toLowerCase().startsWith('insert') && !pgSql.toLowerCase().includes(' returning ')
+      const normalizedSql = pgSql.trim().toLowerCase();
+      const querySql = normalizedSql.startsWith('insert')
+        && !normalizedSql.includes(' returning ')
+        && !normalizedSql.startsWith('insert into app_metadata')
         ? `${pgSql} RETURNING id`
         : pgSql;
       const res = await pool.query(querySql, params);
