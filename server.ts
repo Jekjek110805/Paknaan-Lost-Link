@@ -22,12 +22,15 @@ const isProd = process.env.NODE_ENV === 'production';
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'paknaan-secret-key-change-in-production';
 const DATABASE_PATH = process.env.DATABASE_PATH?.trim() || './database.sqlite';
+
 const getAppUrl = () => {
-  const configured = process.env.APP_URL?.trim();
-  if (configured && !configured.startsWith('MY_')) return configured.replace(/\/+$/, '');
-  return `http://localhost:${PORT}`;
+  let url = process.env.APP_URL?.trim();
+  if (!url || url.startsWith('MY_')) {
+    url = `http://localhost:${PORT}`;
+  }
+  return url.replace(/\/+$/, '');
 };
-const getGoogleRedirectUri = () => process.env.GOOGLE_REDIRECT_URI?.trim() || `${getAppUrl()}/api/auth/google/callback`;
+const getGoogleRedirectUri = () => (process.env.GOOGLE_REDIRECT_URI?.trim() || `${getAppUrl()}/api/auth/google/callback`).replace(/\/+$/, '');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID?.trim();
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET?.trim();
 
