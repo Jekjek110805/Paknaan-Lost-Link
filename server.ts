@@ -23,6 +23,7 @@ const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
 const OPENAI_EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
 const GEMINI_VISION_MODEL = process.env.GEMINI_VISION_MODEL || 'gemini-2.5-flash';
 const GEMINI_EMBEDDING_MODEL = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
+const CLIP_SERVICE_URL = process.env.CLIP_SERVICE_URL?.replace(/\/+$/, '');
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || process.env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
@@ -39,6 +40,7 @@ const DEMO_OFFICIAL_PASSWORD = process.env.DEMO_OFFICIAL_PASSWORD || DEFAULT_DEM
 let pool: any = null;
 let db: any = null;
 let pgVectorReady = false;
+let clipVectorReady = false;
 
 if (USE_POSTGRES) {
   pool = new pg.Pool({
@@ -220,6 +222,27 @@ async function uploadImageFile(file: any) {
     throw new Error(data.error?.message || 'Cloudinary upload failed');
   }
   return data.secure_url as string;
+}
+
+async function createClipImageEmbedding(file: any) {
+  if (!CLIP_SERVICE_URL || !file?.buffer) return null;
+
+  const formData = new FormData();
+  const blob = new Blob([file.buffer], { type: file.mimetype || 'image/jpeg' });
+  formData.append('image', blob, file.originalname || 'item.jpg');
+
+  const response = await fetch(`${CLIP_SERVICE_URL}/embed-image`, {
+    method: 'POST',
+    body: formData,
+  });
+  const data: any = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.detail || data.error || 'CLIP image embedding failed');
+  }
+
+  const embedding = data.embedding;
+  if (!Array.isArray(embedding)) throw new Error('CLIP service did not return an embedding.');
+  return embedding as number[];
 }
 
 async function describeImageWithGemini(file: any, context = '') {
@@ -452,6 +475,20 @@ async function updateItemEmbedding(itemId: any, description: string, embedding: 
   }
 }
 
+async function updateItemClipEmbedding(itemId: any, embedding: number[]) {
+  await db.run(
+    'UPDATE items SET clip_embedding_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [JSON.stringify(embedding), itemId]
+  );
+
+  if (db.type === 'postgres' && clipVectorReady) {
+    await db.run(
+      'UPDATE items SET clip_embedding_vector = ?::vector, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [vectorToSql(embedding), itemId]
+    );
+  }
+}
+
 async function getItemSearchEmbedding(item: any) {
   if (item.embedding_json) {
     try {
@@ -471,6 +508,16 @@ async function getItemSearchEmbedding(item: any) {
   const embedding = await createEmbedding(searchableText);
   await updateItemEmbedding(item.id, visualDescription, embedding);
   return embedding;
+}
+
+function getStoredClipEmbedding(item: any) {
+  if (!item?.clip_embedding_json) return null;
+  try {
+    const parsed = JSON.parse(item.clip_embedding_json);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed as number[] : null;
+  } catch {
+    return null;
+  }
 }
 
 function createPostgresDb() {
@@ -531,10 +578,14 @@ async function ensureVectorColumns() {
   try {
     await pool.query('CREATE EXTENSION IF NOT EXISTS vector');
     await pool.query('ALTER TABLE items ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)');
+    await pool.query('ALTER TABLE items ADD COLUMN IF NOT EXISTS clip_embedding_vector vector(512)');
     await pool.query('CREATE INDEX IF NOT EXISTS items_embedding_vector_idx ON items USING ivfflat (embedding_vector vector_cosine_ops) WITH (lists = 100)');
+    await pool.query('CREATE INDEX IF NOT EXISTS items_clip_embedding_vector_idx ON items USING ivfflat (clip_embedding_vector vector_cosine_ops) WITH (lists = 100)');
     pgVectorReady = true;
+    clipVectorReady = true;
   } catch (error: any) {
     pgVectorReady = false;
+    clipVectorReady = false;
     console.warn('pgvector is unavailable. Falling back to JSON similarity search:', error?.message || error);
   }
 }
@@ -542,6 +593,7 @@ async function ensureVectorColumns() {
 async function ensureImageMatchingColumns() {
   await ensureColumn('items', 'visual_description', 'TEXT');
   await ensureColumn('items', 'embedding_json', 'TEXT');
+  await ensureColumn('items', 'clip_embedding_json', 'TEXT');
   await ensureVectorColumns();
 }
 
@@ -1174,6 +1226,10 @@ async function startServer() {
       );
       const searchableText = [title, description, location, visualDescription].filter(Boolean).join('\n');
       const embedding = await createEmbedding(searchableText);
+      const clipEmbedding = await createClipImageEmbedding(req.file).catch((error: any) => {
+        console.warn('CLIP indexing failed. Continuing with text embedding:', error?.message || error);
+        return null;
+      });
 
       const result = await db.run(`
         INSERT INTO items (title, description, type, category, location, purok, image_url, user_id, status, visual_description, embedding_json)
@@ -1189,6 +1245,7 @@ async function startServer() {
         JSON.stringify(embedding),
       ]);
       await updateItemEmbedding(result.lastID, visualDescription, embedding);
+      if (clipEmbedding) await updateItemClipEmbedding(result.lastID, clipEmbedding);
       await logActivity(req.user.id, 'create_image_match_item', 'item', result.lastID, `Created found item with image matching: ${title}`);
 
       res.status(201).json({
@@ -1214,9 +1271,24 @@ async function startServer() {
       const visualDescription = await describeImage(imageUrl, '', req.file);
       const queryText = visualDescription;
       const embedding = await createEmbedding(queryText);
+      const clipEmbedding = await createClipImageEmbedding(req.file).catch((error: any) => {
+        console.warn('CLIP query embedding failed. Falling back to Gemini/text matching:', error?.message || error);
+        return null;
+      });
       let matches: any[] = [];
 
-      if (db.type === 'postgres' && pgVectorReady) {
+      if (clipEmbedding && db.type === 'postgres' && clipVectorReady) {
+        matches = await db.all(`
+          SELECT id, title, description, type, category, location, image_url, visual_description,
+            1 - (clip_embedding_vector <=> ?::vector) AS clip_score
+          FROM items
+          WHERE type IN ('lost', 'found')
+            AND status IN ('posted', 'approved', 'matched', 'pending')
+            AND clip_embedding_vector IS NOT NULL
+          ORDER BY clip_embedding_vector <=> ?::vector
+          LIMIT 12
+        `, [vectorToSql(clipEmbedding), vectorToSql(clipEmbedding)]);
+      } else if (db.type === 'postgres' && pgVectorReady) {
         matches = await db.all(`
           SELECT id, title, description, type, category, location, image_url, visual_description,
             1 - (embedding_vector <=> ?::vector) AS vector_score
@@ -1229,20 +1301,29 @@ async function startServer() {
         `, [vectorToSql(embedding), vectorToSql(embedding)]);
       } else {
         const candidates = await db.all(`
-          SELECT id, title, description, type, category, location, image_url, visual_description, embedding_json
+          SELECT id, title, description, type, category, location, image_url, visual_description, embedding_json, clip_embedding_json
           FROM items
           WHERE type IN ('lost', 'found')
             AND status IN ('posted', 'approved', 'matched', 'pending')
         `);
         const scoredMatches = [];
         for (const item of candidates) {
+          const storedClipEmbedding = getStoredClipEmbedding(item);
           const itemEmbedding = await getItemSearchEmbedding(item);
           if (!itemEmbedding.length) continue;
-          const { embedding_json, ...publicItem } = item;
+          const { embedding_json, clip_embedding_json, ...publicItem } = item;
           const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
           const vectorScore = cosineSimilarity(embedding, itemEmbedding);
+          const clipScore = clipEmbedding && storedClipEmbedding ? cosineSimilarity(clipEmbedding, storedClipEmbedding) : null;
           const tokenScore = textTokenSimilarity(queryText, itemText);
-          scoredMatches.push({ ...publicItem, vector_score: vectorScore, token_score: tokenScore, similarity_score: calibrateSimilarityScore(vectorScore, tokenScore) });
+          const calibratedTextScore = calibrateSimilarityScore(vectorScore, tokenScore);
+          scoredMatches.push({
+            ...publicItem,
+            vector_score: vectorScore,
+            clip_score: clipScore,
+            token_score: tokenScore,
+            similarity_score: clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4),
+          });
         }
         matches = scoredMatches
           .sort((a: any, b: any) => b.similarity_score - a.similarity_score)
@@ -1252,7 +1333,7 @@ async function startServer() {
       if (db.type === 'postgres' && pgVectorReady && matches.length < 5) {
         const existingIds = new Set(matches.map((item: any) => Number(item.id)));
         const candidates = await db.all(`
-          SELECT id, title, description, type, category, location, image_url, visual_description, embedding_json
+          SELECT id, title, description, type, category, location, image_url, visual_description, embedding_json, clip_embedding_json
           FROM items
           WHERE type IN ('lost', 'found')
             AND status IN ('posted', 'approved', 'matched', 'pending')
@@ -1260,13 +1341,22 @@ async function startServer() {
         const scoredMatches = [...matches];
         for (const item of candidates) {
           if (existingIds.has(Number(item.id))) continue;
+          const storedClipEmbedding = getStoredClipEmbedding(item);
           const itemEmbedding = await getItemSearchEmbedding(item);
           if (!itemEmbedding.length) continue;
-          const { embedding_json, ...publicItem } = item;
+          const { embedding_json, clip_embedding_json, ...publicItem } = item;
           const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
           const vectorScore = cosineSimilarity(embedding, itemEmbedding);
+          const clipScore = clipEmbedding && storedClipEmbedding ? cosineSimilarity(clipEmbedding, storedClipEmbedding) : null;
           const tokenScore = textTokenSimilarity(queryText, itemText);
-          scoredMatches.push({ ...publicItem, vector_score: vectorScore, token_score: tokenScore, similarity_score: calibrateSimilarityScore(vectorScore, tokenScore) });
+          const calibratedTextScore = calibrateSimilarityScore(vectorScore, tokenScore);
+          scoredMatches.push({
+            ...publicItem,
+            vector_score: vectorScore,
+            clip_score: clipScore,
+            token_score: tokenScore,
+            similarity_score: clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4),
+          });
         }
         matches = scoredMatches
           .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
@@ -1277,12 +1367,15 @@ async function startServer() {
         .map((item: any) => {
           const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
           const vectorScore = Number(item.vector_score ?? item.similarity_score ?? 0);
+          const clipScore = item.clip_score === undefined || item.clip_score === null ? null : Number(item.clip_score || 0);
           const tokenScore = Number(item.token_score ?? textTokenSimilarity(queryText, itemText));
+          const calibratedTextScore = calibrateSimilarityScore(vectorScore, tokenScore);
           return {
             ...item,
             vector_score: vectorScore,
+            clip_score: clipScore,
             token_score: tokenScore,
-            similarity_score: calibrateSimilarityScore(vectorScore, tokenScore),
+            similarity_score: clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4),
           };
         })
         .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
@@ -1300,6 +1393,7 @@ async function startServer() {
           ...item,
           similarity_score: Number(item.similarity_score ?? calibrateSimilarityScore(Number(item.vector_score || 0), 0)),
           vector_score: Number(item.vector_score || 0),
+          clip_score: item.clip_score === undefined || item.clip_score === null ? null : Number(item.clip_score || 0),
           token_score: Number(item.token_score || 0),
           ai_score: item.ai_score === undefined ? null : Number(item.ai_score || 0),
           match_reason: item.match_reason || null,
