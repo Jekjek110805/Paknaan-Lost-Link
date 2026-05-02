@@ -4,7 +4,7 @@ import {
   Search, PlusCircle, User, Settings, MapPin, Calendar, Clock, ShieldCheck, 
   Bell, Menu, X, LayoutDashboard, LogOut, ChevronLeft, ChevronRight, TrendingUp, 
   Award, AlertCircle, CheckCircle, XCircle, Eye, Edit, Trash2, 
-  QrCode, FileText, Download, Share2, Filter, ArrowLeft, Home as HomeIcon,
+  EyeOff, QrCode, FileText, Download, Share2, Filter, ArrowLeft, Home as HomeIcon,
   BarChart3, Users, Package, MessageSquare, Star, AlertTriangle, ImagePlus, Database, History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -663,10 +663,19 @@ const Home = () => {
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const rememberedEmail = localStorage.getItem('rememberedEmail');
+    if (!rememberedEmail) return;
+    setEmail(rememberedEmail);
+    setRememberMe(true);
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -674,11 +683,17 @@ const Login = () => {
     setLoading(true);
     try {
       await login(email, password);
+      if (rememberMe) {
+        localStorage.setItem('rememberedEmail', email);
+      } else {
+        localStorage.removeItem('rememberedEmail');
+      }
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Login failed');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -705,8 +720,34 @@ const Login = () => {
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-300">Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="form-field" placeholder="********" required />
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="form-field pr-12"
+                placeholder="********"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(value => !value)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 transition hover:bg-white/10 hover:text-white"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+              </button>
+            </div>
           </div>
+          <label className="flex items-center gap-3 text-sm text-slate-300">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="h-4 w-4 rounded border-white/20 bg-[#0a1022] text-[#4f8cff] focus:ring-[#4f8cff]"
+            />
+            <span>Remember me</span>
+          </label>
           <button type="submit" disabled={loading} className="btn-primary w-full py-3">{loading ? 'Signing in...' : 'Sign In'}</button>
         </form>
         <p className="mt-6 text-center text-slate-400">Don't have an account? <Link to="/signup" className="font-semibold text-[#9dc4ff]">Sign up</Link></p>
