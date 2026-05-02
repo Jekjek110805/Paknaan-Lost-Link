@@ -223,7 +223,7 @@ const Sidebar = ({
   return (
     <>
       {/* Mobile Top Header */}
-      <div className="md:hidden sticky top-0 z-40 flex h-16 items-center justify-between border-b border-white/10 bg-[#070b1a] px-4">
+      <div className="sticky top-0 z-50 flex h-16 items-center justify-between border-b border-white/10 bg-[#070b1a] px-4 md:hidden">
         <Link to="/" className="flex items-center gap-2">
           <div className="h-8 w-8 overflow-hidden rounded-md bg-white p-0.5">
             <img src={logoUrl} alt="" className="h-full w-full object-contain" />
@@ -242,13 +242,13 @@ const Sidebar = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setIsOpen(false)}
-            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm md:hidden"
+            className="fixed inset-x-0 bottom-0 top-16 z-40 bg-black/60 backdrop-blur-sm md:hidden"
           />
         )}
       </AnimatePresence>
 
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-white/10 bg-[#070b1a] transition-all duration-300 ease-in-out md:translate-x-0",
+        "fixed bottom-0 left-0 top-16 z-50 flex flex-col border-r border-white/10 bg-[#070b1a] transition-all duration-300 ease-in-out md:inset-y-0 md:top-0 md:translate-x-0",
         collapsed ? "w-64 md:w-20" : "w-64",
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}>
@@ -2068,14 +2068,14 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
-    <div className="flex min-h-screen bg-[#050816]">
+    <div className="min-h-screen overflow-x-hidden bg-[#050816]">
       <Sidebar
         user={user}
         onLogout={logout}
         collapsed={sidebarCollapsed}
         onCollapsedChange={setSidebarCollapsed}
       />
-      <main className={cn("flex-1 transition-[padding] duration-300", sidebarCollapsed ? "md:pl-20" : "md:pl-64")}>
+      <main className={cn("min-w-0 transition-[padding] duration-300", sidebarCollapsed ? "md:pl-20" : "md:pl-64")}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
