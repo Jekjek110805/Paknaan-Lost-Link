@@ -1014,24 +1014,17 @@ const PostItemPage = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      if (selectedImage) {
-        const formData = new FormData();
-        Object.entries({ ...form, type }).forEach(([key, value]) => {
-          formData.append(key, String(value ?? ''));
-        });
-        formData.append('image', selectedImage);
-        await apiFormCall('/api/items', formData);
-      } else {
-        await apiCall('/api/items', {
-          method: 'POST',
-          body: JSON.stringify({ ...form, type })
-        });
-      }
+      const imageUrl = selectedImage ? await uploadImage(selectedImage) : undefined;
+      await apiCall('/api/items', {
+        method: 'POST',
+        body: JSON.stringify({ ...form, type, image_url: imageUrl })
+      });
       navigate('/dashboard');
     } catch (err: any) {
       alert(err.message || 'Failed to submit');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (

@@ -142,6 +142,12 @@ const toSqliteRuntimeSql = (sql: string) => sql
   .replace(/CURRENT_DATE\s+-\s+INTERVAL\s+'7 days'/gi, "datetime('now', '-7 days')")
   .replace(/date_trunc\('day',\s*created_at\)/gi, 'date(created_at)');
 
+const optionalValue = (value: any) => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  return value;
+};
+
 function createPostgresDb() {
   return {
     type: 'postgres',
@@ -692,9 +698,9 @@ async function startServer() {
         contact_preference, additional_contact, finder_name, finder_contact, turnover_to_barangay, 
         storage_location, image_url, facebook_url, user_id, status) 
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-    `, [title, description, type, category, location, itemZone, date_lost, date_found, 
-      contact_preference || 'message', additional_contact, finder_name, finder_contact, 
-      willTurnOver, storage_location, uploadedImageUrl || null, facebook_url || null, req.user.id]);
+    `, [title, description, type, category, location, itemZone, optionalValue(date_lost), optionalValue(date_found), 
+      contact_preference || 'message', optionalValue(additional_contact), optionalValue(finder_name), optionalValue(finder_contact), 
+      willTurnOver, optionalValue(storage_location), optionalValue(uploadedImageUrl), optionalValue(facebook_url), req.user.id]);
 
     await logActivity(req.user.id, 'create_item', 'item', result.lastID, `Created ${type} item: ${title}`);
     res.status(201).json({ message: 'Item reported successfully', id: result.lastID });
@@ -715,7 +721,7 @@ async function startServer() {
     await db.run(`
       UPDATE items SET title = ?, description = ?, category = ?, location = ?, purok = ?, 
       date_lost = ?, date_found = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-    `, [title, description, category, location, itemZone, date_lost, date_found, req.params.id]);
+    `, [title, description, category, location, itemZone, optionalValue(date_lost), optionalValue(date_found), req.params.id]);
     
     res.json({ message: 'Item updated successfully' });
   });
