@@ -5,7 +5,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import { createServer as createViteServer } from 'vite';
 import multer from 'multer';
 import crypto from 'crypto';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -1235,6 +1234,7 @@ async function startServer() {
 
   // Only run Vite development server if we are local and not in production mode
   if (!IS_VERCEL && process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'custom',
