@@ -6,6 +6,10 @@
       "destination": "/api/health.ts"
     },
     {
+      "source": "/api/debug-server",
+      "destination": "/api/debug-server.ts"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/index.ts"
     },
