@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
+import pg from 'pg';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import jwt from 'jsonwebtoken';
@@ -18,14 +17,21 @@ dotenv.config({ quiet: true });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const isProd = process.env.NODE_ENV === 'production';
+const IS_VERCEL = process.env.VERCEL === '1';
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'paknaan-secret-key-change-in-production';
-const DATABASE_PATH = process.env.DATABASE_PATH?.trim() || './database.sqlite';
+
+// Use DATABASE_URL from Supabase, Neon, or Vercel Postgres
+const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+
+const pool = new pg.Pool({
+  connectionString: DATABASE_URL,
+  ssl: IS_VERCEL ? { rejectUnauthorized: false } : false
+});
 
 const getAppUrl = () => {
   let url = process.env.APP_URL?.trim();
-  if (!url || url.startsWith('MY_')) {
+  if (!url || url.startsWith('MY_') || url === '') {
     url = `http://localhost:${PORT}`;
   }
   return url.replace(/\/+$/, '');
@@ -38,12 +44,16 @@ const geminiApiKey = process.env.GEMINI_API_KEY;
 const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
 
 // File upload configuration
-const storage = multer.diskStorage({
-  destination: './uploads/',
-  filename: (req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`);
-  }
-});
+// Vercel filesystem is read-only. Use memoryStorage for serverless.
+const storage = IS_VERCEL 
+  ? multer.memoryStorage() 
+  : multer.diskStorage({
+      destination: './uploads/',
+      filename: (req, file, cb) => {
+        cb(null, `${Date.now()}-${file.originalname}`);
+      }
+    });
+
 const upload = multer({ 
   storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
@@ -99,28 +109,52 @@ const ZONES = [
   'Ubi',
 ];
 
-async function startServer() {
-  const app = express();
-  app.use(cors());
-  app.use(express.json());
-  app.use('/uploads', express.static('./uploads'));
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-  // Ensure uploads directory exists
-  const fs = await import('fs');
-  if (!fs.existsSync('./uploads')) {
-    fs.mkdirSync('./uploads');
+// Only serve static uploads when not on Vercel
+if (!IS_VERCEL) {
+  app.use('/uploads', express.static('./uploads'));
+}
+
+// Compatibility shim to make Postgres act like the 'sqlite' library
+const db = {
+  get: async (sql: string, params: any[] = []) => {
+    const res = await pool.query(sql.replace(/\?/g, (_, i) => `$${i + 1}`), params);
+    return res.rows[0];
+  },
+  all: async (sql: string, params: any[] = []) => {
+    const res = await pool.query(sql.replace(/\?/g, (_, i) => `$${i + 1}`), params);
+    return res.rows;
+  },
+  run: async (sql: string, params: any[] = []) => {
+    // SQLite uses lastID; PostgreSQL requires RETURNING id
+    const querySql = sql.toLowerCase().includes('insert') ? `${sql} RETURNING id` : sql;
+    const res = await pool.query(querySql.replace(/\?/g, (_, i) => `$${i + 1}`), params);
+    return { lastID: res.rows[0]?.id };
+  },
+  exec: async (sql: string) => {
+    await pool.query(sql);
+  }
+};
+
+async function initDb() {
+  if (!IS_VERCEL) {
+    const fs = await import('node:fs');
+    if (!fs.default.existsSync('./uploads')) {
+      try {
+        fs.default.mkdirSync('./uploads');
+      } catch (e) {
+        console.warn('Could not create uploads directory:', e);
+      }
+    }
   }
 
-  // Database initialization
-  const db = await open({
-    filename: DATABASE_PATH,
-    driver: sqlite3.Database
-  });
-
   // Create all tables
-  await db.exec(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password TEXT,
@@ -130,15 +164,15 @@ async function startServer() {
       contact_number TEXT,
       address TEXT,
       purok TEXT,
-      verified_at DATETIME,
-      email_verified INTEGER DEFAULT 0,
+      verified_at TIMESTAMP,
+      email_verified BOOLEAN DEFAULT FALSE,
       status TEXT DEFAULT 'active',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       title TEXT NOT NULL,
       description TEXT NOT NULL,
       type TEXT CHECK(type IN ('lost', 'found')) NOT NULL,
@@ -147,7 +181,7 @@ async function startServer() {
       purok TEXT,
       date_lost DATE,
       date_found DATE,
-      date_reported DATETIME DEFAULT CURRENT_TIMESTAMP,
+      date_reported TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       image_url TEXT,
       status TEXT DEFAULT 'pending',
       user_id INTEGER,
@@ -155,17 +189,17 @@ async function startServer() {
       additional_contact TEXT,
       finder_name TEXT,
       finder_contact TEXT,
-      turnover_to_barangay INTEGER DEFAULT 0,
+      turnover_to_barangay BOOLEAN DEFAULT FALSE,
       barangay_received_by TEXT,
       storage_location TEXT,
       admin_remarks TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS claims (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       item_id INTEGER,
       user_id INTEGER,
       message TEXT,
@@ -174,30 +208,30 @@ async function startServer() {
       id_card_url TEXT,
       status TEXT DEFAULT 'pending',
       reviewed_by INTEGER,
-      reviewed_at DATETIME,
+      reviewed_at TIMESTAMP,
       remarks TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(item_id) REFERENCES items(id),
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS notifications (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       user_id INTEGER,
       type TEXT NOT NULL,
       title TEXT NOT NULL,
       message TEXT NOT NULL,
       reference_id INTEGER,
       reference_type TEXT,
-      is_read INTEGER DEFAULT 0,
-      email_sent INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      is_read BOOLEAN DEFAULT FALSE,
+      email_sent BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS activity_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       user_id INTEGER,
       action TEXT NOT NULL,
       target_type TEXT,
@@ -205,144 +239,94 @@ async function startServer() {
       details TEXT,
       ip_address TEXT,
       user_agent TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS ai_matches (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       lost_item_id INTEGER,
       found_item_id INTEGER,
       confidence_score INTEGER,
       status TEXT DEFAULT 'pending',
       confirmed_by INTEGER,
-      confirmed_at DATETIME,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      confirmed_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(lost_item_id) REFERENCES items(id),
       FOREIGN KEY(found_item_id) REFERENCES items(id)
     );
 
     CREATE TABLE IF NOT EXISTS qr_claim_slips (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       claim_id INTEGER UNIQUE,
       token TEXT NOT NULL,
       qr_data TEXT NOT NULL,
       generated_by INTEGER,
-      generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      expires_at DATETIME NOT NULL,
-      used_at DATETIME,
+      generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      expires_at TIMESTAMP NOT NULL,
+      used_at TIMESTAMP,
       used_by INTEGER,
       FOREIGN KEY(claim_id) REFERENCES claims(id),
       FOREIGN KEY(generated_by) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS badges (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       slug TEXT UNIQUE NOT NULL,
       description TEXT NOT NULL,
       icon TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS user_badges (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       user_id INTEGER,
       badge_id INTEGER,
-      awarded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      awarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id),
       FOREIGN KEY(badge_id) REFERENCES badges(id),
       UNIQUE(user_id, badge_id)
     );
 
     CREATE TABLE IF NOT EXISTS suspicious_flags (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       claim_id INTEGER,
       user_id INTEGER,
       reason TEXT NOT NULL,
       risk_score INTEGER,
-      reviewed INTEGER DEFAULT 0,
+      reviewed BOOLEAN DEFAULT FALSE,
       reviewed_by INTEGER,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(claim_id) REFERENCES claims(id),
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS password_resets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       user_id INTEGER,
       token TEXT NOT NULL,
-      expires_at DATETIME NOT NULL,
-      used_at DATETIME,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at TIMESTAMP NOT NULL,
+      used_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS social_accounts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       user_id INTEGER,
       provider TEXT NOT NULL,
       provider_id TEXT NOT NULL,
       access_token TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id),
       UNIQUE(user_id, provider)
     );
   `);
-
-  const ensureColumn = async (table: string, column: string, definition: string) => {
-    const columns = await db.all(`PRAGMA table_info(${table})`);
-    if (!columns.some((existing: any) => existing.name === column)) {
-      await db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    }
-  };
-
-  // Keep older local SQLite files compatible with the current schema.
-  await ensureColumn('users', 'provider', "TEXT DEFAULT 'local'");
-  await ensureColumn('users', 'photo_url', 'TEXT');
-  await ensureColumn('users', 'contact_number', 'TEXT');
-  await ensureColumn('users', 'address', 'TEXT');
-  await ensureColumn('users', 'purok', 'TEXT');
-  await ensureColumn('users', 'verified_at', 'DATETIME');
-  await ensureColumn('users', 'email_verified', 'INTEGER DEFAULT 0');
-  await ensureColumn('users', 'status', "TEXT DEFAULT 'active'");
-  await ensureColumn('users', 'updated_at', 'DATETIME');
-  await ensureColumn('social_accounts', 'access_token', 'TEXT');
-
-  await ensureColumn('items', 'purok', 'TEXT');
-  await ensureColumn('items', 'date_lost', 'DATE');
-  await ensureColumn('items', 'date_found', 'DATE');
-  await ensureColumn('items', 'image_url', 'TEXT');
-  await ensureColumn('items', 'contact_preference', "TEXT DEFAULT 'message'");
-  await ensureColumn('items', 'additional_contact', 'TEXT');
-  await ensureColumn('items', 'finder_name', 'TEXT');
-  await ensureColumn('items', 'finder_contact', 'TEXT');
-  await ensureColumn('items', 'turnover_to_barangay', 'INTEGER DEFAULT 0');
-  await ensureColumn('items', 'barangay_received_by', 'TEXT');
-  await ensureColumn('items', 'storage_location', 'TEXT');
-  await ensureColumn('items', 'admin_remarks', 'TEXT');
-  await ensureColumn('items', 'updated_at', 'DATETIME');
-
-  const legacyZoneMap = [
-    ['Purok 1', 'Agbate'],
-    ['Purok 2', 'Ahos'],
-    ['Purok 3', 'Batong'],
-    ['Purok 4', 'Camanse'],
-    ['Purok 5', 'Camote'],
-    ['Purok 6', 'Carrots'],
-    ['Purok 7', 'Gabi'],
-    ['Purok 8', 'Kalbasa'],
-    ['Purok 9', 'Kamunggay'],
-  ];
-  for (const [legacyValue, zoneValue] of legacyZoneMap) {
-    await db.run('UPDATE users SET purok = ? WHERE purok = ?', [zoneValue, legacyValue]);
-    await db.run('UPDATE items SET purok = ? WHERE purok = ?', [zoneValue, legacyValue]);
-  }
-
   // Insert default badges if not exist
-  const existingBadges = await db.all('SELECT * FROM badges');
+  const { rows: existingBadges } = await pool.query('SELECT * FROM badges');
   if (existingBadges.length === 0) {
-    await db.exec(`
+    await pool.query(`
       INSERT INTO badges (name, slug, description, icon) VALUES
       ('Honest Finder', 'honest-finder', 'Report 3 or more found items', 'handshake'),
       ('Verified Resident', 'verified-resident', 'Complete profile and verify identity', 'check'),
@@ -352,8 +336,15 @@ async function startServer() {
       ('Long-term Member', 'long-term-member', 'Account active for over 6 months', 'star');
     `);
   }
+}
 
-  console.log('Database initialized');
+async function startServer() {
+  try {
+    await initDb();
+    console.log('Database initialized successfully');
+  } catch (err) {
+    console.error('Database initialization failed:', err);
+  }
 
   // ==================== MIDDLEWARE ====================
   
@@ -1222,7 +1213,8 @@ async function startServer() {
 
   // ==================== FRONTEND HANDLING ====================
 
-  if (!isProd) {
+  // Only run Vite development server if we are local and not in production mode
+  if (!IS_VERCEL && process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'custom',
@@ -1245,8 +1237,15 @@ async function startServer() {
     // No explicit static serving or catch-all route needed here for Vercel.
   }
 
-  app.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}`);
-  });
+  // Local development listener
+  if (!IS_VERCEL) {
+    app.listen(PORT, () => {
+      console.log(`Server running at http://localhost:${PORT}`);
+    });
+  }
 }
+
+// Start the server initialization
 startServer();
+
+export default app;
