@@ -20,6 +20,8 @@ function cn(...inputs: ClassValue[]) {
 const API_URL = '';
 const logoUrl = new URL('./assets/lostlink-logo-cropped.png', import.meta.url).href;
 const brgyLoginBgUrl = new URL('./assets/barangay-hall-login-bg.png', import.meta.url).href;
+const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
 const GoogleIcon = ({ className = 'h-5 w-5' }: { className?: string }) => (
   <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
@@ -55,18 +57,35 @@ async function apiCall(endpoint: string, options: any = {}) {
   return data;
 }
 
-async function apiFormCall(endpoint: string, formData: FormData, options: any = {}) {
-  const token = localStorage.getItem('token');
-  const headers: any = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+async function compressImage(file: File, maxWidth = 1280, quality = 0.72) {
+  if (!file.type.startsWith('image/') || file.size < 700 * 1024) return file;
 
-  const res = await fetch(`${API_URL}${endpoint}`, { ...options, method: options.method || 'POST', headers, body: formData });
-  const data = await parseApiResponse(res);
-  if (!res.ok) throw new Error(data.error || data.message || data.details || `Request failed (${res.status})`);
-  return data;
+  const image = new Image();
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = reject;
+      image.src = objectUrl;
+    });
+
+    const scale = Math.min(1, maxWidth / image.width);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return file;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
-async function uploadImage(file: File) {
+async function uploadImageToBackend(file: File) {
   const token = localStorage.getItem('token');
   const formData = new FormData();
   formData.append('image', file);
@@ -79,6 +98,27 @@ async function uploadImage(file: File) {
   const data = await parseApiResponse(res);
   if (!res.ok) throw new Error(data.error || data.message || data.details || `Image upload failed (${res.status})`);
   return data.url as string;
+}
+
+async function uploadImage(file: File) {
+  const compressedFile = await compressImage(file);
+  if (!cloudinaryCloudName || !cloudinaryUploadPreset) {
+    return uploadImageToBackend(compressedFile);
+  }
+
+  const formData = new FormData();
+  formData.append('file', compressedFile);
+  formData.append('upload_preset', cloudinaryUploadPreset);
+  formData.append('folder', 'paknaan-lostlink/items');
+
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  const data = await parseApiResponse(res);
+  if (!res.ok) throw new Error(data.error?.message || data.error || `Cloudinary upload failed (${res.status})`);
+  if (!data.secure_url) throw new Error('Cloudinary upload did not return an image URL.');
+  return data.secure_url as string;
 }
 
 // ==================== AUTH ====================
