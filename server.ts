@@ -1,8 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
-import { open } from 'sqlite';
-import sqlite3 from 'sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import jwt from 'jsonwebtoken';
@@ -197,9 +195,13 @@ async function ensureColumn(table: string, column: string, definition: string) {
 }
 
 async function initDb() {
-  db = USE_POSTGRES
-    ? createPostgresDb()
-    : createSqliteDb(await open({ filename: DATABASE_PATH, driver: sqlite3.Database }));
+  if (USE_POSTGRES) {
+    db = createPostgresDb();
+  } else {
+    const { open } = await import('sqlite');
+    const sqlite3 = (await import('sqlite3')).default;
+    db = createSqliteDb(await open({ filename: DATABASE_PATH, driver: sqlite3.Database }));
+  }
 
   if (!IS_VERCEL) {
     const fs = await import('fs');
