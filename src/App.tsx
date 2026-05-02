@@ -57,6 +57,17 @@ async function apiCall(endpoint: string, options: any = {}) {
   return data;
 }
 
+async function apiFormCall(endpoint: string, body: FormData, options: any = {}) {
+  const token = localStorage.getItem('token');
+  const headers: any = options.headers ? { ...options.headers } : {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${API_URL}${endpoint}`, { ...options, method: options.method || 'POST', headers, body });
+  const data = await parseApiResponse(res);
+  if (!res.ok) throw new Error(data.error || data.message || data.details || `Request failed (${res.status})`);
+  return data;
+}
+
 async function compressImage(file: File, maxWidth = 1280, quality = 0.72) {
   if (!file.type.startsWith('image/') || file.size < 700 * 1024) return file;
 
@@ -1076,6 +1087,17 @@ const PostItemPage = () => {
     e.preventDefault();
     setLoading(true);
     try {
+      if (selectedImage && (!cloudinaryCloudName || !cloudinaryUploadPreset)) {
+        const formData = new FormData();
+        Object.entries({ ...form, type }).forEach(([key, value]) => {
+          formData.append(key, String(value ?? ''));
+        });
+        formData.append('image', await compressImage(selectedImage));
+        await apiFormCall('/api/items', formData);
+        navigate('/dashboard');
+        return;
+      }
+
       const imageUrl = selectedImage ? await uploadImage(selectedImage) : undefined;
       await apiCall('/api/items', {
         method: 'POST',
@@ -1246,6 +1268,17 @@ const ClaimSubmitPage = () => {
     e.preventDefault();
     setLoading(true);
     try {
+      if (proofFile && (!cloudinaryCloudName || !cloudinaryUploadPreset)) {
+        const formData = new FormData();
+        Object.entries({ item_id: itemId || '', ...form }).forEach(([key, value]) => {
+          formData.append(key, String(value ?? ''));
+        });
+        formData.append('proof', await compressImage(proofFile));
+        await apiFormCall('/api/claims', formData);
+        navigate('/dashboard');
+        return;
+      }
+
       const proofUrl = proofFile ? await uploadImage(proofFile) : undefined;
       await apiCall('/api/claims', {
         method: 'POST',
@@ -1254,8 +1287,9 @@ const ClaimSubmitPage = () => {
       navigate('/dashboard');
     } catch (err: any) {
       alert(err.message || 'Failed to submit claim');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   if (!item) return <div className="mx-auto max-w-2xl px-4 py-8"><div className="glass-card h-64 animate-pulse" /></div>;

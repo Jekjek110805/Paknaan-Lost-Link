@@ -150,6 +150,14 @@ const optionalValue = (value: any) => {
   return value;
 };
 
+const getUploadedFileUrl = (file?: any) => {
+  if (!file) return null;
+  const filename = file.filename || `${Date.now()}-${file.originalname}`;
+  return IS_VERCEL
+    ? `data:${file.mimetype};base64,${file.buffer.toString('base64')}`
+    : `/uploads/${filename}`;
+};
+
 function createPostgresDb() {
   return {
     type: 'postgres',
@@ -697,11 +705,7 @@ async function startServer() {
       image_url, facebook_url
     } = req.body;
     const itemZone = zone || purok || 'Outside Barangay Paknaan';
-    const uploadedImageUrl = req.file
-      ? (IS_VERCEL
-          ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
-          : `/uploads/${req.file.filename}`)
-      : image_url;
+    const uploadedImageUrl = getUploadedFileUrl(req.file) || image_url;
     const willTurnOver = turnover_to_barangay === true || turnover_to_barangay === 'true' || turnover_to_barangay === '1';
     
     if (!title || !description || !type || !category || !location || !itemZone ) {
@@ -823,8 +827,9 @@ async function startServer() {
     res.json(claim);
   });
 
-  app.post('/api/claims', authenticateToken, async (req: any, res) => {
+  app.post('/api/claims', authenticateToken, upload.single('proof'), async (req: any, res) => {
     const { item_id, message, proof_type, proof_url, facebook_url } = req.body;
+    const uploadedProofUrl = getUploadedFileUrl(req.file) || proof_url;
     
     const parsedItemId = parseInt(String(item_id));
     const item = await db.get('SELECT * FROM items WHERE id = ?', [parsedItemId]);
@@ -842,13 +847,13 @@ async function startServer() {
       return res.status(400).json({ error: 'You already have a pending claim on this item' });
     }
 
-    if (!proof_url) {
+    if (!uploadedProofUrl) {
       return res.status(400).json({ error: 'Proof photo is required' });
     }
 
     const result = await db.run(`
       INSERT INTO claims (item_id, user_id, message, proof_type, proof_url, facebook_url, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')
-    `, [parsedItemId, req.user.id, message, proof_type, proof_url, facebook_url]);
+    `, [parsedItemId, req.user.id, optionalValue(message), optionalValue(proof_type), uploadedProofUrl, optionalValue(facebook_url)]);
 
     await logActivity(req.user.id, 'create_claim', 'claim', result.lastID, `Claimed item: ${item.title}`);
 
@@ -1258,9 +1263,7 @@ async function startServer() {
       return res.status(400).json({ error: 'No file uploaded' });
     }
     const filename = req.file.filename || `${Date.now()}-${req.file.originalname}`;
-    const url = IS_VERCEL
-      ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
-      : `/uploads/${filename}`;
+    const url = getUploadedFileUrl(req.file);
     res.json({ 
       url,
       filename: filename
@@ -1272,9 +1275,7 @@ async function startServer() {
       return res.status(400).json({ error: 'No file uploaded' });
     }
     const filename = req.file.filename || `${Date.now()}-${req.file.originalname}`;
-    const url = IS_VERCEL
-      ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
-      : `/uploads/${filename}`;
+    const url = getUploadedFileUrl(req.file);
     await db.run('UPDATE users SET photo_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
       [url, req.user.id]);
     res.json({ 
