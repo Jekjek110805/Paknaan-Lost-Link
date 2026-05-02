@@ -28,6 +28,8 @@ const VERTEX_AI_LOCATION = process.env.VERTEX_AI_LOCATION || 'us-central1';
 const VERTEX_AI_MODEL = process.env.VERTEX_AI_MODEL || 'multimodalembedding@001';
 const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 const CLIP_SERVICE_URL = process.env.CLIP_SERVICE_URL?.replace(/\/+$/, '');
+const IMAGE_MATCH_RERANK = process.env.IMAGE_MATCH_RERANK === '1';
+const IMAGE_MATCH_TIMEOUT_MS = Number(process.env.IMAGE_MATCH_TIMEOUT_MS || 12000);
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || process.env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
@@ -206,11 +208,42 @@ const getUploadedFileUrl = (file?: any) => {
     : `/uploads/${filename}`;
 };
 
+const fileFromImageUrl = async (imageUrl?: string | null) => {
+  if (!imageUrl) return null;
+  if (imageUrl.startsWith('/uploads/')) return null;
+  try {
+    const response = await withTimeout(fetch(imageUrl), 8000);
+    if (!response.ok) return null;
+    const arrayBuffer = await response.arrayBuffer();
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    if (!contentType.startsWith('image/')) return null;
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      mimetype: contentType,
+      originalname: 'item-image.jpg',
+    };
+  } catch {
+    return null;
+  }
+};
+
 const base64Url = (input: string | Buffer) => Buffer.from(input)
   .toString('base64')
   .replace(/=/g, '')
   .replace(/\+/g, '-')
   .replace(/\//g, '_');
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs = IMAGE_MATCH_TIMEOUT_MS) {
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 function getGoogleServiceAccount() {
   if (!GOOGLE_SERVICE_ACCOUNT_JSON) return null;
@@ -344,13 +377,13 @@ async function createVertexImageEmbedding(file: any, text = '') {
 }
 
 async function createManagedImageEmbedding(file: any, text = '') {
-  const vertexEmbedding = await createVertexImageEmbedding(file, text).catch((error: any) => {
+  const vertexEmbedding = await withTimeout(createVertexImageEmbedding(file, text)).catch((error: any) => {
     console.warn('Vertex AI embedding failed. Trying CLIP service:', error?.message || error);
     return null;
   });
   if (vertexEmbedding) return { provider: 'vertex', embedding: vertexEmbedding };
 
-  const clipEmbedding = await createClipImageEmbedding(file).catch((error: any) => {
+  const clipEmbedding = await withTimeout(createClipImageEmbedding(file)).catch((error: any) => {
     console.warn('CLIP image embedding failed. Falling back to Gemini/text:', error?.message || error);
     return null;
   });
@@ -631,6 +664,28 @@ function getStoredClipEmbedding(item: any) {
     return Array.isArray(parsed) && parsed.length > 0 ? parsed as number[] : null;
   } catch {
     return null;
+  }
+}
+
+async function indexItemForVisualSearch(itemId: any) {
+  try {
+    await ensureImageMatchingColumns();
+    const item = await db.get('SELECT * FROM items WHERE id = ?', [itemId]);
+    if (!item) return;
+
+    const context = `Known item details: title="${item.title || ''}", type="${item.type || ''}", category="${item.category || ''}", description="${item.description || ''}", location="${item.location || ''}".`;
+    const file = await fileFromImageUrl(item.image_url);
+    const visualDescription = item.visual_description || (file ? await describeImage('', context, file).catch(() => null) : null) || context;
+    const searchableText = [item.title, item.description, item.category, item.location, visualDescription].filter(Boolean).join('\n');
+    const textEmbedding = await createEmbedding(searchableText);
+    await updateItemEmbedding(item.id, visualDescription, textEmbedding);
+
+    if (file) {
+      const imageEmbedding = await createManagedImageEmbedding(file, searchableText);
+      if (imageEmbedding) await updateItemClipEmbedding(item.id, imageEmbedding.embedding);
+    }
+  } catch (error: any) {
+    console.warn('Visual search indexing failed:', error?.message || error);
   }
 }
 
@@ -1249,6 +1304,7 @@ async function startServer() {
       willTurnOver, optionalValue(storage_location), optionalValue(uploadedImageUrl), optionalValue(facebook_url), req.user.id]);
 
     await logActivity(req.user.id, 'create_item', 'item', result.lastID, `Created ${type} item: ${title}`);
+    indexItemForVisualSearch(result.lastID).catch(console.error);
     res.status(201).json({ message: 'Item reported successfully', id: result.lastID });
   });
 
@@ -1297,6 +1353,7 @@ async function startServer() {
     // Trigger AI matching if posted
     if (status === 'posted') {
       triggerAIMatching(parsedId, item.type).catch(console.error);
+      indexItemForVisualSearch(parsedId).catch(console.error);
     }
 
     res.json({ message: 'Status updated successfully' });
@@ -1378,12 +1435,12 @@ async function startServer() {
       await ensureImageMatchingColumns();
       if (!req.file) return res.status(400).json({ error: 'Image file is required' });
 
-      const imageUrl = await uploadImageFile(req.file);
-      const visualDescription = await describeImage(imageUrl, '', req.file);
-      const queryText = visualDescription;
-      const embedding = await createEmbedding(queryText);
+      const imageUrl = getUploadedFileUrl(req.file);
+      let visualDescription = '';
+      let queryText = 'Uploaded item photo for matching.';
       const imageEmbedding = await createManagedImageEmbedding(req.file, queryText);
       const clipEmbedding = imageEmbedding?.embedding || null;
+      let embedding: number[] = [];
       let matches: any[] = [];
 
       if (clipEmbedding && db.type === 'postgres' && clipVectorReady) {
@@ -1398,6 +1455,9 @@ async function startServer() {
           LIMIT 12
         `, [vectorToSql(clipEmbedding), vectorToSql(clipEmbedding)]);
       } else if (db.type === 'postgres' && pgVectorReady) {
+        visualDescription = await withTimeout(describeImage('', '', req.file), 8000).catch(() => '');
+        queryText = visualDescription || queryText;
+        embedding = await createEmbedding(visualDescription || queryText);
         matches = await db.all(`
           SELECT id, title, description, type, category, location, image_url, visual_description,
             1 - (embedding_vector <=> ?::vector) AS vector_score
@@ -1409,16 +1469,26 @@ async function startServer() {
           LIMIT 12
         `, [vectorToSql(embedding), vectorToSql(embedding)]);
       } else {
+        visualDescription = await withTimeout(describeImage('', '', req.file), 8000).catch(() => '');
+        queryText = visualDescription || queryText;
+        embedding = await createEmbedding(visualDescription || queryText);
         const candidates = await db.all(`
           SELECT id, title, description, type, category, location, image_url, visual_description, embedding_json, clip_embedding_json
           FROM items
           WHERE type IN ('lost', 'found')
             AND status IN ('posted', 'approved', 'matched', 'pending')
+          ORDER BY created_at DESC
+          LIMIT 80
         `);
         const scoredMatches = [];
         for (const item of candidates) {
           const storedClipEmbedding = getStoredClipEmbedding(item);
-          const itemEmbedding = await getItemSearchEmbedding(item);
+          let itemEmbedding: number[] = [];
+          try {
+            itemEmbedding = JSON.parse(item.embedding_json || '[]');
+          } catch {
+            itemEmbedding = [];
+          }
           if (!itemEmbedding.length) continue;
           const { embedding_json, clip_embedding_json, ...publicItem } = item;
           const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
@@ -1446,12 +1516,19 @@ async function startServer() {
           FROM items
           WHERE type IN ('lost', 'found')
             AND status IN ('posted', 'approved', 'matched', 'pending')
+          ORDER BY created_at DESC
+          LIMIT 80
         `);
         const scoredMatches = [...matches];
         for (const item of candidates) {
           if (existingIds.has(Number(item.id))) continue;
           const storedClipEmbedding = getStoredClipEmbedding(item);
-          const itemEmbedding = await getItemSearchEmbedding(item);
+          let itemEmbedding: number[] = [];
+          try {
+            itemEmbedding = JSON.parse(item.embedding_json || '[]');
+          } catch {
+            itemEmbedding = [];
+          }
           if (!itemEmbedding.length) continue;
           const { embedding_json, clip_embedding_json, ...publicItem } = item;
           const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
@@ -1490,7 +1567,9 @@ async function startServer() {
         .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
         .slice(0, 12);
 
-      matches = await rerankMatchesWithGemini(req.file, queryText, matches);
+      if (IMAGE_MATCH_RERANK) {
+        matches = await withTimeout(rerankMatchesWithGemini(req.file, queryText, matches.slice(0, 5)), 10000).catch(() => matches);
+      }
       matches = matches
         .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
         .slice(0, 5);
