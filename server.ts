@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
+import { open } from 'sqlite';
+import sqlite3 from 'sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import jwt from 'jsonwebtoken';
@@ -21,17 +23,26 @@ const IS_VERCEL = process.env.VERCEL === '1';
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'paknaan-secret-key-change-in-production';
 
-// Use DATABASE_URL from Supabase, Neon, or Vercel Postgres
 const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+const DATABASE_PATH = process.env.DATABASE_PATH || './database.sqlite';
+const isLocalPostgresUrl = DATABASE_URL ? /@(localhost|127\.0\.0\.1|\[?::1\]?)(:\d+)?\//i.test(DATABASE_URL) : false;
+const USE_POSTGRES = Boolean(DATABASE_URL && (IS_VERCEL || !isLocalPostgresUrl));
 
-if (IS_VERCEL && !DATABASE_URL) {
-  console.error('CRITICAL: DATABASE_URL is missing in environment variables.');
+let pool: any = null;
+let db: any = null;
+
+if (USE_POSTGRES) {
+  pool = new pg.Pool({
+    connectionString: DATABASE_URL,
+    ssl: IS_VERCEL ? { rejectUnauthorized: false } : false
+  });
+} else {
+  if (DATABASE_URL && isLocalPostgresUrl) {
+    console.warn('\x1b[33m%s\x1b[0m', `Local Postgres is not required for development. Using SQLite at ${DATABASE_PATH}.`);
+  } else {
+    console.warn('\x1b[33m%s\x1b[0m', `DATABASE_URL is missing. Using SQLite at ${DATABASE_PATH}.`);
+  }
 }
-
-const pool = new pg.Pool({
-  connectionString: DATABASE_URL,
-  ssl: IS_VERCEL ? { rejectUnauthorized: false } : false
-});
 
 const getAppUrl = () => {
   let url = process.env.APP_URL?.trim();
@@ -107,6 +118,7 @@ const ZONES = [
   'Tamatis',
   'Tanglong',
   'Ubi',
+  'Outside Barangay Paknaan',
 ];
 
 const app = express();
@@ -118,32 +130,77 @@ if (!IS_VERCEL) {
   app.use('/uploads', express.static('./uploads'));
 }
 
-// Compatibility shim to make Postgres act like the 'sqlite' library
-const db = {
-  get: async (sql: string, params: any[] = []) => {
-    let count = 0;
-    const res = await pool.query(sql.replace(/\?/g, () => `$${++count}`), params);
-    return res.rows[0];
-  },
-  all: async (sql: string, params: any[] = []) => {
-    let count = 0;
-    const res = await pool.query(sql.replace(/\?/g, () => `$${++count}`), params);
-    return res.rows;
-  },
-  run: async (sql: string, params: any[] = []) => {
-    let count = 0;
-    const pgSql = sql.replace(/\?/g, () => `$${++count}`);
-    // SQLite uses lastID; PostgreSQL requires RETURNING id
-    const querySql = pgSql.toLowerCase().includes('insert') ? `${pgSql} RETURNING id` : pgSql;
-    const res = await pool.query(querySql, params);
-    return { lastID: res.rows[0]?.id };
-  },
-  exec: async (sql: string) => {
-    await pool.query(sql);
-  }
+const toPgSql = (sql: string) => {
+  let count = 0;
+  return sql.replace(/\?/g, () => `$${++count}`);
 };
 
+const toSqliteSchema = (sql: string) => sql
+  .replace(/\bSERIAL\s+PRIMARY\s+KEY\b/gi, 'INTEGER PRIMARY KEY AUTOINCREMENT')
+  .replace(/\bBOOLEAN\b/gi, 'INTEGER')
+  .replace(/CURRENT_TIMESTAMP\s+\+\s+interval\s+'7 days'/gi, "datetime('now', '+7 days')");
+
+const toSqliteRuntimeSql = (sql: string) => sql
+  .replace(/CURRENT_TIMESTAMP\s+\+\s+interval\s+'7 days'/gi, "datetime('now', '+7 days')")
+  .replace(/TO_CHAR\(created_at,\s*'Mon DD'\)/gi, "strftime('%m-%d', created_at)")
+  .replace(/CURRENT_DATE\s+-\s+INTERVAL\s+'7 days'/gi, "datetime('now', '-7 days')")
+  .replace(/date_trunc\('day',\s*created_at\)/gi, 'date(created_at)');
+
+function createPostgresDb() {
+  return {
+    type: 'postgres',
+    get: async (sql: string, params: any[] = []) => {
+      const res = await pool.query(toPgSql(sql), params);
+      return res.rows[0];
+    },
+    all: async (sql: string, params: any[] = []) => {
+      const res = await pool.query(toPgSql(sql), params);
+      return res.rows;
+    },
+    run: async (sql: string, params: any[] = []) => {
+      const pgSql = toPgSql(sql);
+      const querySql = pgSql.trim().toLowerCase().startsWith('insert') && !pgSql.toLowerCase().includes(' returning ')
+        ? `${pgSql} RETURNING id`
+        : pgSql;
+      const res = await pool.query(querySql, params);
+      return { lastID: res.rows[0]?.id };
+    },
+    exec: async (sql: string) => {
+      await pool.query(sql);
+    }
+  };
+}
+
+function createSqliteDb(sqliteDb: any) {
+  return {
+    type: 'sqlite',
+    get: (sql: string, params: any[] = []) => sqliteDb.get(toSqliteRuntimeSql(sql), params),
+    all: (sql: string, params: any[] = []) => sqliteDb.all(toSqliteRuntimeSql(sql), params),
+    run: (sql: string, params: any[] = []) => sqliteDb.run(toSqliteRuntimeSql(sql), params),
+    exec: (sql: string) => sqliteDb.exec(toSqliteSchema(sql)),
+  };
+}
+
+async function ensureColumn(table: string, column: string, definition: string) {
+  if (db.type === 'postgres') {
+    await pool.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${definition}`);
+    return;
+  }
+
+  const columns = await db.all(`PRAGMA table_info(${table})`);
+  if (columns.some((existing: any) => existing.name === column)) return;
+
+  const sqliteDefinition = definition
+    .replace(/\bBOOLEAN\b/gi, 'INTEGER')
+    .replace(/\s+DEFAULT\s+CURRENT_TIMESTAMP/gi, '');
+  await db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${sqliteDefinition}`);
+}
+
 async function initDb() {
+  db = USE_POSTGRES
+    ? createPostgresDb()
+    : createSqliteDb(await open({ filename: DATABASE_PATH, driver: sqlite3.Database }));
+
   if (!IS_VERCEL) {
     const fs = await import('fs');
     if (!fs.existsSync('./uploads')) {
@@ -156,11 +213,12 @@ async function initDb() {
   }
 
   // Create all tables
-  await pool.query(`
+  await db.exec(toSqliteSchema(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
+      facebook_url TEXT,
       password TEXT,
       role TEXT DEFAULT 'resident',
       provider TEXT DEFAULT 'local',
@@ -187,6 +245,7 @@ async function initDb() {
       date_found DATE,
       date_reported TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       image_url TEXT,
+      facebook_url TEXT,
       status TEXT DEFAULT 'pending',
       user_id INTEGER,
       contact_preference TEXT DEFAULT 'message',
@@ -209,6 +268,7 @@ async function initDb() {
       message TEXT,
       proof_type TEXT,
       proof_url TEXT,
+      facebook_url TEXT,
       id_card_url TEXT,
       status TEXT DEFAULT 'pending',
       reviewed_by INTEGER,
@@ -306,39 +366,84 @@ async function initDb() {
       FOREIGN KEY(user_id) REFERENCES users(id)
     );
 
-  `);
+  `));
+
+  // CREATE TABLE IF NOT EXISTS does not add columns to databases created by
+  // older app versions, so keep these migrations idempotent.
+  await ensureColumn('users', 'facebook_url', 'TEXT');
+  await ensureColumn('users', 'contact_number', 'TEXT');
+  await ensureColumn('users', 'address', 'TEXT');
+  await ensureColumn('users', 'purok', 'TEXT');
+  await ensureColumn('users', 'verified_at', 'TIMESTAMP');
+  await ensureColumn('users', 'email_verified', 'BOOLEAN DEFAULT FALSE');
+  await ensureColumn('users', 'status', "TEXT DEFAULT 'active'");
+  await ensureColumn('users', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+
+  await ensureColumn('items', 'purok', 'TEXT');
+  await ensureColumn('items', 'date_lost', 'DATE');
+  await ensureColumn('items', 'date_found', 'DATE');
+  await ensureColumn('items', 'date_reported', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+  await ensureColumn('items', 'facebook_url', 'TEXT');
+  await ensureColumn('items', 'contact_preference', "TEXT DEFAULT 'message'");
+  await ensureColumn('items', 'additional_contact', 'TEXT');
+  await ensureColumn('items', 'finder_name', 'TEXT');
+  await ensureColumn('items', 'finder_contact', 'TEXT');
+  await ensureColumn('items', 'turnover_to_barangay', 'BOOLEAN DEFAULT FALSE');
+  await ensureColumn('items', 'barangay_received_by', 'TEXT');
+  await ensureColumn('items', 'storage_location', 'TEXT');
+  await ensureColumn('items', 'admin_remarks', 'TEXT');
+  await ensureColumn('items', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+
+  await ensureColumn('claims', 'message', 'TEXT');
+  await ensureColumn('claims', 'proof_type', 'TEXT');
+  await ensureColumn('claims', 'proof_url', 'TEXT');
+  await ensureColumn('claims', 'facebook_url', 'TEXT');
+  await ensureColumn('claims', 'id_card_url', 'TEXT');
+  await ensureColumn('claims', 'reviewed_by', 'INTEGER');
+  await ensureColumn('claims', 'reviewed_at', 'TIMESTAMP');
+  await ensureColumn('claims', 'remarks', 'TEXT');
+  await ensureColumn('claims', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+
+  await ensureColumn('notifications', 'reference_id', 'INTEGER');
+  await ensureColumn('notifications', 'reference_type', 'TEXT');
+  await ensureColumn('notifications', 'is_read', 'BOOLEAN DEFAULT FALSE');
+  await ensureColumn('notifications', 'email_sent', 'BOOLEAN DEFAULT FALSE');
+
+  await ensureColumn('ai_matches', 'status', "TEXT DEFAULT 'pending'");
+  await ensureColumn('ai_matches', 'confirmed_by', 'INTEGER');
+  await ensureColumn('ai_matches', 'confirmed_at', 'TIMESTAMP');
 
   // Seed Demo Admin Account
   const demoAdminEmail = 'admin@paknaan.gov'.toLowerCase();
-  const { rows: adminExists } = await pool.query('SELECT * FROM users WHERE email = $1', [demoAdminEmail]);
+  const adminExists = await db.all('SELECT * FROM users WHERE email = ?', [demoAdminEmail]);
   
   if (adminExists.length === 0) {
     const hashedPw = await bcrypt.hash('admin123', 10);
-    await pool.query(`
+    await db.run(`
       INSERT INTO users (name, email, password, role, provider, email_verified, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `, ['System Admin', demoAdminEmail, hashedPw, 'admin', 'local', true, 'active']);
     console.log(`Demo Admin account created: ${demoAdminEmail}`);
   }
 
   // Seed Demo Official Account
   const demoOfficialEmail = 'official@paknaan.gov'.toLowerCase();
-  const { rows: officialExists } = await pool.query('SELECT * FROM users WHERE email = $1', [demoOfficialEmail]);
+  const officialExists = await db.all('SELECT * FROM users WHERE email = ?', [demoOfficialEmail]);
   
   if (officialExists.length === 0) {
     console.log('Seeding demo official account...');
     const hashedPw = await bcrypt.hash('official123', 10);
-    await pool.query(`
+    await db.run(`
       INSERT INTO users (name, email, password, role, provider, email_verified, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `, ['Paknaan Official', demoOfficialEmail, hashedPw, 'official', 'local', true, 'active']);
     console.log(`Demo Official account created: ${demoOfficialEmail}`);
   }
 
   // Insert default badges if not exist
-  const { rows: existingBadges } = await pool.query('SELECT * FROM badges');
+  const existingBadges = await db.all('SELECT * FROM badges');
   if (existingBadges.length === 0) {
-    await pool.query(`
+    await db.exec(`
       INSERT INTO badges (name, slug, description, icon) VALUES
       ('Honest Finder', 'honest-finder', 'Report 3 or more found items', 'handshake'),
       ('Verified Resident', 'verified-resident', 'Complete profile and verify identity', 'check'),
@@ -351,16 +456,26 @@ async function initDb() {
 }
 
 let dbInitialized = false;
-const dbInitPromise = initDb().then(() => {
+let dbInitError: unknown = null;
+let dbInitPromise: Promise<void> = Promise.resolve();
+dbInitPromise = initDb().then(() => {
   dbInitialized = true;
-  console.log('Database initialized successfully');
+  console.log(`Database initialized successfully (${USE_POSTGRES ? 'Postgres' : 'SQLite'})`);
 }).catch(err => {
+  dbInitError = err;
+  dbInitialized = true;
   console.error('Database initialization failed:', err);
 });
 
 async function startServer() {
   app.use(async (req, res, next) => {
     if (!dbInitialized) await dbInitPromise;
+    if (dbInitError && req.path.startsWith('/api') && req.path !== '/api/constants') {
+      return res.status(503).json({
+        error: 'Database unavailable',
+        details: 'Check DATABASE_URL and make sure the database server is running.'
+      });
+    }
     next();
   });
 
@@ -410,6 +525,7 @@ async function startServer() {
     role: user.role,
     photo_url: user.photo_url,
     zone: user.purok,
+    facebook_url: user.facebook_url,
     provider: user.provider,
     email_verified: Boolean(user.email_verified),
     verified: user.verified_at ? true : false,
@@ -418,7 +534,7 @@ async function startServer() {
   // ==================== AUTH ROUTES ====================
 
   app.post('/api/auth/register', async (req, res) => {
-    let { name, email, password } = req.body;
+    let { name, email, password, contact_number, zone, facebook_url } = req.body;
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'All fields are required' });
     }
@@ -426,8 +542,8 @@ async function startServer() {
     const hashedPassword = await bcrypt.hash(password, 10);
     try {
       const result = await db.run(
-        'INSERT INTO users (name, email, password) VALUES (?, ?, ?)',
-        [name, email, hashedPassword]
+        'INSERT INTO users (name, email, password, contact_number, purok, facebook_url) VALUES (?, ?, ?, ?, ?, ?)',
+        [name, email, hashedPassword, contact_number, zone, facebook_url]
       );
       const token = jwt.sign({ id: result.lastID, role: 'resident', name }, JWT_SECRET);
       res.status(201).json({ 
@@ -533,22 +649,22 @@ async function startServer() {
       title, description, type, category, location, purok, zone,
       date_lost, date_found, contact_preference, additional_contact,
       finder_name, finder_contact, turnover_to_barangay, storage_location,
-      image_url
+      image_url, facebook_url
     } = req.body;
-    const itemZone = zone || purok;
+    const itemZone = zone || purok || 'Outside Barangay Paknaan';
     
-    if (!title || !description || !type || !category || !location || !itemZone) {
+    if (!title || !description || !type || !category || !location || !itemZone ) {
       return res.status(400).json({ error: 'All required fields must be filled' });
     }
 
     const result = await db.run(`
       INSERT INTO items (title, description, type, category, location, purok, date_lost, date_found, 
         contact_preference, additional_contact, finder_name, finder_contact, turnover_to_barangay, 
-        storage_location, image_url, user_id, status) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        storage_location, image_url, facebook_url, user_id, status) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
     `, [title, description, type, category, location, itemZone, date_lost, date_found, 
       contact_preference || 'message', additional_contact, finder_name, finder_contact, 
-      turnover_to_barangay ? 1 : 0, storage_location, image_url || null, req.user.id]);
+      Boolean(turnover_to_barangay), storage_location, image_url || null, facebook_url || null, req.user.id]);
 
     await logActivity(req.user.id, 'create_item', 'item', result.lastID, `Created ${type} item: ${title}`);
     res.status(201).json({ message: 'Item reported successfully', id: result.lastID });
@@ -584,20 +700,21 @@ async function startServer() {
     const item = await db.get('SELECT * FROM items WHERE id = ?', [req.params.id]);
     if (!item) return res.status(404).json({ error: 'Item not found' });
 
+    const parsedId = parseInt(req.params.id);
     await db.run('UPDATE items SET status = ?, admin_remarks = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
-      [status, admin_remarks, req.params.id]);
+      [status, admin_remarks, parsedId]);
     
-    await logActivity(req.user.id, 'update_status', 'item', req.params.id, `Status changed to ${status}`);
+    await logActivity(req.user.id, 'update_status', 'item', parsedId, `Status changed to ${status}`);
 
     // Notify user
     await db.run(`
       INSERT INTO notifications (user_id, type, title, message, reference_id, reference_type) 
       VALUES (?, ?, ?, ?, ?, 'item')
-    `, [item.user_id, `item_${status}`, `Item ${status}`, `Your ${item.type} item "${item.title}" has been ${status}`, item.id]);
+    `, [item.user_id, `item_${status}`, `Item ${status}`, `Your ${item.type} item "${item.title}" has been ${status}`, parsedId]);
 
     // Trigger AI matching if posted
     if (status === 'posted') {
-      triggerAIMatching(req.params.id, item.type).catch(console.error);
+      triggerAIMatching(parsedId, item.type).catch(console.error);
     }
 
     res.json({ message: 'Status updated successfully' });
@@ -647,9 +764,11 @@ async function startServer() {
   });
 
   app.post('/api/claims', authenticateToken, async (req: any, res) => {
-    const { item_id, message, proof_type, proof_url } = req.body;
+    const { item_id, message, proof_type, proof_url, facebook_url } = req.body;
     
-    const item = await db.get('SELECT * FROM items WHERE id = ?', [item_id]);
+    const parsedItemId = parseInt(String(item_id));
+    const item = await db.get('SELECT * FROM items WHERE id = ?', [parsedItemId]);
+    
     if (!item) return res.status(404).json({ error: 'Item not found' });
     if (item.status !== 'posted' && item.status !== 'matched') {
       return res.status(400).json({ error: 'This item cannot be claimed at this time' });
@@ -657,7 +776,8 @@ async function startServer() {
 
     // Check for existing pending claim
     const existing = await db.get("SELECT * FROM claims WHERE item_id = ? AND user_id = ? AND status IN ('pending', 'under_review', 'approved')", 
-      [item_id, req.user.id]);
+      [parsedItemId, req.user.id]);
+      
     if (existing) {
       return res.status(400).json({ error: 'You already have a pending claim on this item' });
     }
@@ -667,8 +787,8 @@ async function startServer() {
     }
 
     const result = await db.run(`
-      INSERT INTO claims (item_id, user_id, message, proof_type, proof_url, status) VALUES (?, ?, ?, ?, ?, 'pending')
-    `, [item_id, req.user.id, message, proof_type, proof_url]);
+      INSERT INTO claims (item_id, user_id, message, proof_type, proof_url, facebook_url, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')
+    `, [parsedItemId, req.user.id, message, proof_type, proof_url, facebook_url]);
 
     await logActivity(req.user.id, 'create_claim', 'claim', result.lastID, `Claimed item: ${item.title}`);
 
@@ -676,9 +796,9 @@ async function startServer() {
     const officials = await db.all("SELECT id FROM users WHERE role IN ('admin', 'official')");
     for (const official of officials) {
       await db.run(`
-        INSERT INTO notifications (user_id, type, title, message, reference_id, reference_type) 
-        VALUES (?, 'new_claim', 'New Claim for Review', 'A new claim has been submitted for item: ${item.title}', ?, 'claim')
-      `, [official.id, result.lastID]);
+        INSERT INTO notifications (user_id, type, title, message, reference_id, reference_type)
+        VALUES (?, 'new_claim', 'New Claim for Review', ?, ?, 'claim')
+      `, [official.id, `A new claim has been submitted for item: ${item.title}`, result.lastID]);
     }
 
     res.status(201).json({ message: 'Claim submitted successfully', id: result.lastID });
@@ -701,23 +821,24 @@ async function startServer() {
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
     });
 
+    const parsedClaimId = parseInt(req.params.id);
     await db.run('UPDATE claims SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
-      ['approved', req.user.id, req.params.id]);
+      ['approved', req.user.id, parsedClaimId]);
     
     await db.run(`
       INSERT INTO qr_claim_slips (claim_id, token, qr_data, generated_by, expires_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP + interval '7 days')
-    `, [req.params.id, token, qrData, req.user.id]);
+    `, [parsedClaimId, token, qrData, req.user.id]);
 
     // Update item status
     await db.run('UPDATE items SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', ['claimed', claim.item_id]);
 
-    await logActivity(req.user.id, 'approve_claim', 'claim', req.params.id, 'Claim approved');
+    await logActivity(req.user.id, 'approve_claim', 'claim', parsedClaimId, 'Claim approved');
 
     // Notify claimant
     await db.run(`
       INSERT INTO notifications (user_id, type, title, message, reference_id, reference_type) 
       VALUES (?, 'claim_approved', 'Claim Approved!', 'Your claim has been approved. Please visit the barangay office with valid ID to claim your item.', ?, 'claim')
-    `, [claim.user_id, req.params.id]);
+    `, [claim.user_id, parsedClaimId]);
 
     res.json({ message: 'Claim approved successfully', qrData });
   });
@@ -932,7 +1053,7 @@ async function startServer() {
 
   // ==================== ADMIN ROUTES ====================
 
-  app.get('/api/admin/dashboard', authenticateToken, verifyRole(['admin']), async (req, res) => {
+  app.get('/api/admin/dashboard', authenticateToken, verifyRole(['admin', 'official']), async (req, res) => {
     const stats = {
       totalUsers: (await db.get('SELECT COUNT(*) as count FROM users'))?.count || 0,
       totalLost: (await db.get("SELECT COUNT(*) as count FROM items WHERE type = 'lost'"))?.count || 0,
@@ -1074,9 +1195,10 @@ async function startServer() {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
+    const filename = req.file.filename || `${Date.now()}-${req.file.originalname}`;
     res.json({ 
-      url: `/uploads/${req.file.filename}`,
-      filename: req.file.filename
+      url: `/uploads/${filename}`,
+      filename: filename
     });
   });
 
@@ -1126,13 +1248,21 @@ async function startServer() {
 
   // Local development listener
   if (!IS_VERCEL) {
-    app.listen(PORT, () => {
-      console.log(`Server running at http://localhost:${PORT}`);
+    const server = app.listen(PORT, () => {
+      console.log(`\x1b[32m%s\x1b[0m`, `Ready! Access your app at: http://localhost:${PORT}`);
+    }).on('error', (err: any) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(`\x1b[31m%s\x1b[0m`, `Error: Port ${PORT} is already in use. Try closing the other process or changing the PORT constant.`);
+      } else {
+        console.error(`\x1b[31m%s\x1b[0m`, `Server failed to start:`, err);
+      }
     });
   }
 }
 
 // Start the server initialization
-startServer();
+startServer().catch(err => {
+  console.error(`\x1b[31m%s\x1b[0m`, `Failed to start server:`, err);
+});
 
 export default app;

@@ -1,12 +1,11 @@
 import { useState, useEffect, createContext, useContext, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate, useParams, Navigate } from 'react-router-dom';
 import { 
   Search, PlusCircle, User, Settings, MapPin, Calendar, Clock, ShieldCheck, 
-  Bell, Menu, X, LayoutDashboard, LogOut, ChevronRight, TrendingUp, 
+  Bell, Menu, X, LayoutDashboard, LogOut, ChevronLeft, ChevronRight, TrendingUp, 
   Award, AlertCircle, CheckCircle, XCircle, Eye, Edit, Trash2, 
   QrCode, FileText, Download, Share2, Filter, ArrowLeft, Home as HomeIcon,
-  BarChart3, Users, Package, MessageSquare, Star, AlertTriangle, ImagePlus,
-  Database, History, Scan
+  BarChart3, Users, Package, MessageSquare, Star, AlertTriangle, ImagePlus, Database, History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -20,6 +19,7 @@ function cn(...inputs: ClassValue[]) {
 // ==================== API ====================
 const API_URL = '';
 const logoUrl = new URL('./assets/lostlink-logo-cropped.png', import.meta.url).href;
+const brgyLoginBgUrl = new URL('./assets/barangay-hall-login-bg.png', import.meta.url).href;
 
 const GoogleIcon = ({ className = 'h-5 w-5' }: { className?: string }) => (
   <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
@@ -72,27 +72,22 @@ function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(false);
   }, []);
 
-  const saveSession = (token: string, nextUser: any) => {
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(nextUser));
-    setUser(nextUser);
-  };
-
   const login = async (email: string, password: string) => {
     const data = await apiCall('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
     saveSession(data.token, data.user);
     return data;
   };
 
-  const register = async (name: string, email: string, password: string) => {
-    const data = await apiCall('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password }) });
+  const register = async (userData: any) => {
+    const data = await apiCall('/api/auth/register', { method: 'POST', body: JSON.stringify(userData) });
     saveSession(data.token, data.user);
     return data;
   };
 
-  const loginWithGoogle = (returnTo = '/dashboard') => {
-    const params = new URLSearchParams({ returnTo });
-    window.location.assign(`/api/auth/google?${params.toString()}`);
+  const saveSession = (token: string, nextUser: any) => {
+    localStorage.setItem('token', token);
+    localStorage.setItem('user', JSON.stringify(nextUser));
+    setUser(nextUser);
   };
 
   const completeGoogleLogin = (token: string, nextUser: any) => {
@@ -106,7 +101,7 @@ function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, loginWithGoogle, completeGoogleLogin, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, register, completeGoogleLogin, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );
@@ -157,6 +152,7 @@ const ZONES = [
   'Tamatis',
   'Tanglong',
   'Ubi',
+  'Outside Barangay Paknaan',
 ];
 
 const STATUS_COLORS: any = {
@@ -179,7 +175,17 @@ const ADMIN_STAT_STYLES: Record<string, { bg: string; text: string }> = {
 
 // ==================== COMPONENTS ====================
 
-const Sidebar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
+const Sidebar = ({
+  user,
+  onLogout,
+  collapsed,
+  onCollapsedChange,
+}: {
+  user: any,
+  onLogout: () => void,
+  collapsed: boolean,
+  onCollapsedChange: (collapsed: boolean) => void,
+}) => {
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
 
@@ -194,22 +200,23 @@ const Sidebar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
     { name: 'Reports Queue', path: '/admin/reports', icon: FileText },
     { name: 'Claims', path: '/admin/claims', icon: MessageSquare },
     { name: 'Users', path: '/admin/users', icon: Users },
-    { name: 'System Database', path: '/admin/database', icon: Database },
   ];
 
   const NavItem = ({ link }: { link: any }) => (
     <Link
       to={link.path}
+      title={collapsed ? link.name : undefined}
       onClick={() => setIsOpen(false)}
       className={cn(
-        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-all duration-200",
+        "flex items-center rounded-lg px-3 py-2.5 text-sm font-semibold transition-all duration-200",
+        collapsed ? "justify-center gap-0" : "gap-3",
         location.pathname === link.path 
           ? "bg-[#4f8cff]/15 text-[#9dc4ff] shadow-sm" 
           : "text-slate-400 hover:bg-white/5 hover:text-white"
       )}
     >
       <link.icon className={cn("h-5 w-5", location.pathname === link.path ? "text-[#9dc4ff]" : "text-slate-500")} />
-      <span className="whitespace-nowrap">{link.name}</span>
+      <span className={cn("whitespace-nowrap transition-opacity duration-200", collapsed && "sr-only")}>{link.name}</span>
     </Link>
   );
 
@@ -223,15 +230,11 @@ const Sidebar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
           </div>
           <span className="text-lg font-black text-white">LostLink</span>
         </Link>
-        <button 
-          onClick={() => setIsOpen(true)}
-          className="rounded-lg p-2 text-slate-300 hover:bg-white/10"
-        >
+        <button onClick={() => setIsOpen(true)} className="rounded-lg p-2 text-slate-300 hover:bg-white/10">
           <Menu className="h-6 w-6" />
         </button>
       </div>
 
-      {/* Sidebar Backdrop (Mobile) */}
       <AnimatePresence>
         {isOpen && (
           <motion.div 
@@ -244,64 +247,77 @@ const Sidebar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
         )}
       </AnimatePresence>
 
-      {/* Sidebar Content */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-white/10 bg-[#070b1a] transition-transform duration-300 ease-in-out md:translate-x-0",
+        "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-white/10 bg-[#070b1a] transition-all duration-300 ease-in-out md:translate-x-0",
+        collapsed ? "w-64 md:w-20" : "w-64",
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}>
-        {/* Logo Section */}
-        <div className="flex h-20 items-center justify-between px-6">
-          <Link to="/" className="flex items-center gap-3">
+        <div className={cn("flex h-20 items-center justify-between", collapsed ? "px-4" : "px-6")}>
+          <Link to="/" className={cn("flex items-center", collapsed ? "justify-center" : "gap-3")}>
             <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white">
               <img src={logoUrl} alt="" className="h-full w-full object-contain p-1" />
             </div>
-            <div className="min-w-0 leading-tight">
+            <div className={cn("min-w-0 leading-tight", collapsed && "hidden")}>
               <span className="block text-lg font-black tracking-tight text-white whitespace-nowrap">Paknaan</span>
               <span className="block text-[10px] font-bold uppercase tracking-wider text-[#82b9ff] whitespace-nowrap">LostLink System</span>
             </div>
           </Link>
+          <button
+            type="button"
+            onClick={() => onCollapsedChange(!collapsed)}
+            className={cn(
+              "hidden h-9 w-9 items-center justify-center rounded-lg text-slate-300 transition hover:bg-white/10 hover:text-white md:flex",
+              collapsed && "mx-auto"
+            )}
+            title={collapsed ? 'Expand sidebar' : 'Minimize sidebar'}
+            aria-label={collapsed ? 'Expand sidebar' : 'Minimize sidebar'}
+          >
+            {collapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
+          </button>
           <button onClick={() => setIsOpen(false)} className="md:hidden text-slate-400 hover:text-white">
             <X className="h-6 w-6" />
           </button>
         </div>
 
-        {/* Navigation Groups */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-8 no-scrollbar">
-          {/* Group 1: Main */}
+        <div className={cn("flex-1 overflow-y-auto px-3 py-4 no-scrollbar", collapsed ? "space-y-4" : "space-y-8")}>
           {user?.role !== 'admin' && (
             <div className="space-y-1">
-              <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Main Menu</p>
+              <p className={cn("px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500", collapsed && "sr-only")}>Main Menu</p>
               {navLinks.map((link) => (
-                <NavItem key={link.name} link={link} />
+                <div key={link.name}>
+                  <NavItem link={link} />
+                </div>
               ))}
             </div>
           )}
 
-          {/* Group 2: User Account */}
           {user && (
             <div className="space-y-1">
-              <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">My Account</p>
+              <p className={cn("px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500", collapsed && "sr-only")}>My Account</p>
               <NavItem link={{ name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard }} />
               <NavItem link={{ name: 'Notifications', path: '/notifications', icon: Bell }} />
               <NavItem link={{ name: 'My Profile', path: '/profile', icon: User }} />
             </div>
           )}
 
-          {/* Group 3: Admin Management */}
-          {user?.role === 'admin' && (
+          {(user?.role === 'admin' || user?.role === 'official') && (
             <div className="space-y-1">
-              <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Management</p>
+              <p className={cn("px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500", collapsed && "sr-only")}>Management</p>
               {adminLinks.map((link) => (
-                <NavItem key={link.name} link={link} />
+                <div key={link.name}>
+                  <NavItem link={link} />
+                </div>
               ))}
+              {user?.role === 'admin' && (
+                <NavItem link={{ name: 'System Database', path: '/admin/database', icon: Database }} />
+              )}
             </div>
           )}
         </div>
 
-        {/* User Footer Section */}
-        <div className="border-t border-white/10 p-4">
+        <div className={cn("border-t border-white/10", collapsed ? "p-3" : "p-4")}>
           {user ? (
-            <div className="flex items-center gap-3">
+            <div className={cn("flex items-center", collapsed ? "justify-center" : "gap-3")}>
               <div className="h-10 w-10 overflow-hidden rounded-full border border-white/20 bg-white/10">
                 {user.photo_url ? (
                   <img src={user.photo_url} alt="" className="h-full w-full object-cover" />
@@ -311,7 +327,7 @@ const Sidebar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
                   </div>
                 )}
               </div>
-              <div className="min-w-0 flex-1">
+              <div className={cn("min-w-0 flex-1", collapsed && "hidden")}>
                 <p className="truncate text-sm font-bold text-white">{user.name}</p>
                 <button 
                   onClick={onLogout}
@@ -323,8 +339,13 @@ const Sidebar = ({ user, onLogout }: { user: any, onLogout: () => void }) => {
               </div>
             </div>
           ) : (
-            <Link to="/login" onClick={() => setIsOpen(false)} className="btn-primary w-full justify-center py-2.5">
-              Sign In
+            <Link
+              to="/login"
+              onClick={() => setIsOpen(false)}
+              title={collapsed ? 'Sign In' : undefined}
+              className={cn("btn-primary justify-center py-2.5", collapsed ? "w-full px-0" : "w-full")}
+            >
+              {collapsed ? <User className="h-5 w-5" /> : 'Sign In'}
             </Link>
           )}
         </div>
@@ -598,20 +619,22 @@ const Login = () => {
   };
 
   return (
-    <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4 py-8">
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card w-full max-w-md p-6 sm:p-8">
+    <div className="relative flex min-h-[calc(100vh-4rem)] items-center justify-center overflow-hidden px-4 py-8">
+      <div
+        className="absolute inset-0 bg-cover bg-center opacity-45 saturate-90"
+        style={{ backgroundImage: `url("${brgyLoginBgUrl}")` }}
+        aria-hidden="true"
+      />
+      <div className="absolute inset-0 bg-[#050816]/58" aria-hidden="true" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(79,140,255,0.10),transparent_46%),linear-gradient(180deg,rgba(5,8,22,0.22),#050816_98%)]" aria-hidden="true" />
+
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card relative z-10 w-full max-w-md p-6 sm:p-8">
         <div className="text-center mb-8">
           <img src={logoUrl} alt="LostLink Brgy Paknaan" className="mx-auto mb-5 h-auto w-44 object-contain" />
           <h1 className="text-2xl font-bold text-white">Welcome Back</h1>
           <p className="text-slate-400">Sign in to your account</p>
         </div>
-
-        {error && (
-          <div className="mb-4 rounded-lg border border-[#ff5c74]/30 bg-[#ff5c74]/15 px-4 py-3 text-[#ffb3bd]">
-            {error}
-          </div>
-        )}
-
+        {error && <div className="mb-4 rounded-lg border border-[#ff5c74]/30 bg-[#ff5c74]/15 px-4 py-3 text-[#ffb3bd]">{error}</div>}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-300">Email</label>
@@ -621,23 +644,16 @@ const Login = () => {
             <label className="mb-1 block text-sm font-medium text-slate-300">Password</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="form-field" placeholder="********" required />
           </div>
-          <button type="submit" disabled={loading} className="btn-primary w-full py-3">
-            {loading ? 'Signing in...' : 'Sign In'}
-          </button>
+          <button type="submit" disabled={loading} className="btn-primary w-full py-3">{loading ? 'Signing in...' : 'Sign In'}</button>
         </form>
-
-        <p className="mt-6 text-center text-slate-400">
-          Don't have an account? <Link to="/signup" className="font-semibold text-[#9dc4ff]">Sign up</Link>
-        </p>
+        <p className="mt-6 text-center text-slate-400">Don't have an account? <Link to="/signup" className="font-semibold text-[#9dc4ff]">Sign up</Link></p>
       </motion.div>
     </div>
   );
 };
 
 const SignUp = () => {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '', contact_number: '', zone: '', facebook_url: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { register } = useAuth();
@@ -645,10 +661,11 @@ const SignUp = () => {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (form.password !== form.confirmPassword) return setError('Passwords do not match');
     setError('');
     setLoading(true);
     try {
-      await register(name, email, password);
+      await register(form);
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Registration failed');
@@ -659,96 +676,29 @@ const SignUp = () => {
   return (
     <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4 py-8">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card w-full max-w-md p-6 sm:p-8">
-        <div className="text-center mb-8">
-          <img src={logoUrl} alt="LostLink Brgy Paknaan" className="mx-auto mb-5 h-auto w-44 object-contain" />
+        <div className="text-center mb-6">
+          <img src={logoUrl} alt="LostLink Brgy Paknaan" className="mx-auto mb-4 h-auto w-44 object-contain" />
           <h1 className="text-2xl font-bold text-white">Create Account</h1>
-          <p className="text-slate-400">Join Paknaan LostLink</p>
+          <p className="text-slate-400">Join Barangay Paknaan LostLink</p>
         </div>
-
-        {error && (
-          <div className="mb-4 rounded-lg border border-[#ff5c74]/30 bg-[#ff5c74]/15 px-4 py-3 text-[#ffb3bd]">
-            {error}
-          </div>
-        )}
-
+        {error && <div className="mb-4 rounded-lg border border-[#ff5c74]/30 bg-[#ff5c74]/15 px-4 py-3 text-[#ffb3bd]">{error}</div>}
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-300">Full Name</label>
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="form-field" placeholder="Juan Dela Cruz" required />
+          <input type="text" placeholder="Full Name" value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="form-field" required />
+          <input type="email" placeholder="Email Address" value={form.email} onChange={e => setForm({...form, email: e.target.value})} className="form-field" required />
+          <div className="grid grid-cols-2 gap-4">
+            <input type="password" placeholder="Password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} className="form-field" required />
+            <input type="password" placeholder="Confirm" value={form.confirmPassword} onChange={e => setForm({...form, confirmPassword: e.target.value})} className="form-field" required />
           </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-300">Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="form-field" placeholder="your@email.com" required />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-300">Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="form-field" placeholder="********" required minLength={6} />
-          </div>
-          <button type="submit" disabled={loading} className="btn-primary w-full py-3">
-            {loading ? 'Creating account...' : 'Create Account'}
-          </button>
+          <input type="tel" placeholder="Contact Number (09xx...)" value={form.contact_number} onChange={e => setForm({...form, contact_number: e.target.value})} className="form-field" required />
+          <select value={form.zone} onChange={e => setForm({...form, zone: e.target.value})} className="form-field" required>
+            <option value="">Select Zone / Purok</option>
+            {ZONES.map(z => <option key={z} value={z}>{z}</option>)}
+          </select>
+          <input type="url" placeholder="Facebook Link (Optional)" value={form.facebook_url} onChange={e => setForm({...form, facebook_url: e.target.value})} className="form-field" />
+          <button type="submit" disabled={loading} className="btn-primary w-full py-3">{loading ? 'Creating...' : 'Create Account'}</button>
         </form>
-
-        <p className="mt-6 text-center text-slate-400">
-          Already have an account? <Link to="/login" className="font-semibold text-[#9dc4ff]">Sign in</Link>
-        </p>
+        <p className="mt-6 text-center text-slate-400">Already have an account? <Link to="/login" className="font-semibold text-[#9dc4ff]">Sign in</Link></p>
       </motion.div>
-    </div>
-  );
-};
-
-const GoogleCallback = () => {
-  const [error, setError] = useState('');
-  const { completeGoogleLogin } = useAuth();
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-    const token = hash.get('token');
-    const userPayload = hash.get('user');
-    const returnTo = hash.get('returnTo') || '/dashboard';
-    const googleError = hash.get('error');
-
-    if (googleError) {
-      setError(googleError);
-      return;
-    }
-
-    if (!token || !userPayload) {
-      setError('Google sign-in did not return a valid session.');
-      return;
-    }
-
-    try {
-      completeGoogleLogin(token, JSON.parse(userPayload));
-      navigate(returnTo.startsWith('/') ? returnTo : '/dashboard', { replace: true });
-    } catch {
-      setError('Could not finish Google sign-in.');
-    }
-  }, [completeGoogleLogin, navigate]);
-
-  return (
-    <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4 py-8">
-      <div className="glass-card w-full max-w-md p-6 text-center sm:p-8">
-        {error ? (
-          <>
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-[#ff5c74]/30 bg-[#ff5c74]/15 text-[#ffb3bd]">
-              <AlertCircle className="h-6 w-6" />
-            </div>
-            <h1 className="text-xl font-bold text-white">Gmail sign-in failed</h1>
-            <p className="mt-3 text-sm leading-6 text-slate-400">{error}</p>
-            <button onClick={() => navigate('/login', { replace: true })} className="btn-primary mt-6 w-full">
-              Back to Login
-            </button>
-          </>
-        ) : (
-          <>
-            <div className="mx-auto mb-4 h-12 w-12 animate-pulse rounded-lg bg-[#4f8cff]/20" />
-            <h1 className="text-xl font-bold text-white">Connecting Gmail</h1>
-            <p className="mt-3 text-sm text-slate-400">Finishing your secure sign-in.</p>
-          </>
-        )}
-      </div>
     </div>
   );
 };
@@ -928,7 +878,7 @@ const ItemDetailPage = () => {
 
 const PostItemPage = () => {
   const [type, setType] = useState<'lost' | 'found'>('lost');
-  const [form, setForm] = useState({ title: '', description: '', category: '', location: '', zone: '', date_lost: '', date_found: '', contact_preference: 'message', finder_name: '', finder_contact: '', turnover_to_barangay: false });
+  const [form, setForm] = useState({ title: '', description: '', category: '', location: '', zone: '', date_lost: '', date_found: '', contact_preference: 'message', finder_name: '', finder_contact: '', turnover_to_barangay: false, facebook_url: '' });
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1027,6 +977,11 @@ const PostItemPage = () => {
                 {ZONES.map(z => <option key={z} value={z}>{z}</option>)}
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-300">Facebook Link</label>
+            <input type="url" value={form.facebook_url} onChange={(e) => setForm({...form, facebook_url: e.target.value})} className="form-field" placeholder="https://facebook.com/username" />
           </div>
 
           <div>
@@ -1400,16 +1355,10 @@ const AdminDashboard = () => {
             <h1 className="editorial-heading mt-3 text-3xl sm:text-4xl leading-tight">Admin Dashboard</h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-slate-400">Real-time system overview, active report queues, and verified claim activity for Barangay Paknaan.</p>
           </div>
-           <div className="flex flex-col gap-3">
-            <button onClick={handleVerifyQR} className="btn-secondary w-full bg-[#19d7b7]/10 text-[#75f7df] border-[#19d7b7]/30 hover:bg-[#19d7b7]/20">
-              <Scan className="h-4 w-4" />
-              Verify QR Claim Slip
-            </button>
-            <Link to="/reports" className="btn-primary w-full">
-              <Download className="h-4 w-4" />
-              Generate Report
-            </Link>
-          </div>
+          <Link to="/reports" className="btn-primary w-full md:w-auto">
+            <Download className="h-4 w-4" />
+            Generate Report
+          </Link>
         </div>
       </div>
 
@@ -2093,17 +2042,21 @@ const ClaimQRPage = () => {
 
 export default function App() {
   const { user, logout } = useAuth();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
-    <Router>
-      <div className="flex min-h-screen bg-[#050816]">
-        <Sidebar user={user} onLogout={logout} />
-        <main className="flex-1 md:pl-64">
-          <Routes>
+    <div className="flex min-h-screen bg-[#050816]">
+      <Sidebar
+        user={user}
+        onLogout={logout}
+        collapsed={sidebarCollapsed}
+        onCollapsedChange={setSidebarCollapsed}
+      />
+      <main className={cn("flex-1 transition-[padding] duration-300", sidebarCollapsed ? "md:pl-20" : "md:pl-64")}>
+        <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<SignUp />} />
-          <Route path="/auth/google/callback" element={<GoogleCallback />} />
           <Route path="/items/lost" element={<ItemsPage type="lost" />} />
           <Route path="/items/found" element={<ItemsPage type="found" />} />
           <Route path="/items/:id" element={<ItemDetailPage />} />
@@ -2120,9 +2073,8 @@ export default function App() {
           <Route path="/reports" element={<ProtectedRoute roles={['admin', 'official']}><ReportsPage /></ProtectedRoute>} />
           <Route path="/unauthorized" element={<Unauthorized />} />
         </Routes>
-        </main>
-      </div>
-    </Router>
+      </main>
+    </div>
   );
 }
 
@@ -2130,8 +2082,10 @@ export default function App() {
 
 export function Root() {
   return (
-    <AuthProvider>
-      <App />
-    </AuthProvider>
+    <Router>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </Router>
   );
 }
