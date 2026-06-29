@@ -5,10 +5,10 @@ const logoUrl = new URL('../assets/lostlink-logo-cropped.png', import.meta.url).
 
 export const AdminDashboard = () => {
   const stats = [
-    { label: 'Total Reports', value: '456', change: '+12%', icon: FileText, tone: 'bg-[#1b8cff]/15 text-[#82b9ff]' },
-    { label: 'Pending Approval', value: '23', change: '-5', icon: Clock, tone: 'bg-[#ffb84d]/15 text-[#ffd08a]' },
-    { label: 'Returned Items', value: '189', change: '+18%', icon: CheckCircle2, tone: 'bg-[#19d7b7]/15 text-[#75f7df]' },
-    { label: 'Active Users', value: '1,240', change: '+45', icon: Users, tone: 'bg-[#b84dff]/15 text-[#d8a7ff]' },
+    { label: 'Total Reports', value: '456', change: '+12%', icon: FileText, tone: 'bg-[#2563eb]/15 text-[#93c5fd]' },
+    { label: 'Pending Approval', value: '23', change: '-5', icon: Clock, tone: 'bg-[#f59e0b]/15 text-[#fcd34d]' },
+    { label: 'Returned Items', value: '189', change: '+18%', icon: CheckCircle2, tone: 'bg-[#10b981]/15 text-[#6ee7b7]' },
+    { label: 'Active Users', value: '1,240', change: '+45', icon: Users, tone: 'bg-[#7c3aed]/15 text-[#c4b5fd]' },
   ];
 
   const recentActivities = [

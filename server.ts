@@ -8,12 +8,21 @@ import bcrypt from 'bcryptjs';
 import multer from 'multer';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config({ path: '.env.local', quiet: true });
 dotenv.config({ quiet: true });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const DEFAULT_DEMO_ADMIN_PASSWORD = 'admin123';
+const DEFAULT_DEMO_OFFICIAL_PASSWORD = 'official123';
+const SCHEMA_VERSION = 'v10';
+const DATABASE_URL = process.env.DATABASE_URL || '';
+const DATABASE_PATH = process.env.DATABASE_PATH || './database.sqlite';
+const isLocalPostgresUrl = DATABASE_URL && (DATABASE_URL.includes('localhost') || DATABASE_URL.includes('127.0.0.1'));
+const USE_POSTGRES = DATABASE_URL && !isLocalPostgresUrl;
 
 const IS_VERCEL = process.env.VERCEL === '1';
 const PORT = 3000;
@@ -24,15 +33,22 @@ const HERMES_MATCH_TIMEOUT_MS = Number(process.env.HERMES_MATCH_TIMEOUT_MS || 60
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || process.env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
-const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-const DATABASE_PATH = process.env.DATABASE_PATH || './database.sqlite';
-const isLocalPostgresUrl = DATABASE_URL ? /@(localhost|127\.0\.0\.1|\[?::1\]?)(:\d+)?\//i.test(DATABASE_URL) : false;
-const USE_POSTGRES = Boolean(DATABASE_URL && (IS_VERCEL || !isLocalPostgresUrl));
-const SCHEMA_VERSION = '2026-05-02-03';
-const DEFAULT_DEMO_ADMIN_PASSWORD = 'admin123';
-const DEFAULT_DEMO_OFFICIAL_PASSWORD = 'official123';
+// Supabase Storage config
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_ITEM_IMAGES_BUCKET = 'item-images';
+
+// Initialize Supabase client for server-side operations (uses service_role key for full access)
+const supabaseServer = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+  : null;
+  
 const DEMO_ADMIN_PASSWORD = process.env.DEMO_ADMIN_PASSWORD || DEFAULT_DEMO_ADMIN_PASSWORD;
 const DEMO_OFFICIAL_PASSWORD = process.env.DEMO_OFFICIAL_PASSWORD || DEFAULT_DEMO_OFFICIAL_PASSWORD;
+
+// Google Sign-In (Google Identity Services). The client ID is public; no client secret needed
+// because we verify the ID token Google issues to the browser server-side.
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '577770716829-k94lqo6lhhh18ssts0ej1lhu9glt5qu8.apps.googleusercontent.com';
 
 let pool: any = null;
 let db: any = null;
@@ -273,25 +289,39 @@ const getUploadedFileUrl = (file?: any) => {
 
 async function uploadImageFile(file: any) {
   if (!file) return null;
-  if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_UPLOAD_PRESET) {
-    return getUploadedFileUrl(file);
+
+  // Try Supabase Storage first (if configured)
+  if (supabaseServer && file.buffer) {
+    try {
+      const fileExt = (file.originalname || 'image.jpg').split('.').pop() || 'jpg';
+      const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
+      const filePath = `items/${fileName}`;
+
+      const { error, data } = await supabaseServer.storage
+        .from(SUPABASE_ITEM_IMAGES_BUCKET)
+        .upload(filePath, file.buffer, {
+          contentType: file.mimetype || 'image/jpeg',
+          cacheControl: '3600',
+          upsert: false,
+        });
+
+      if (error) {
+        console.warn('Supabase upload failed, falling back to local storage:', error.message);
+      } else {
+        // Get the public URL
+        const { data: urlData } = supabaseServer.storage
+          .from(SUPABASE_ITEM_IMAGES_BUCKET)
+          .getPublicUrl(filePath);
+
+        return urlData.publicUrl;
+      }
+    } catch (err: any) {
+      console.warn('Supabase upload error, falling back to local storage:', err?.message || err);
+    }
   }
 
-  const formData = new FormData();
-  const blob = new Blob([file.buffer], { type: file.mimetype });
-  formData.append('file', blob, file.originalname || 'item.jpg');
-  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-  formData.append('folder', 'paknaan-lostlink/items');
-
-  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
-    method: 'POST',
-    body: formData,
-  });
-  const data: any = await response.json().catch(() => ({}));
-  if (!response.ok || !data.secure_url) {
-    throw new Error(data.error?.message || 'Cloudinary upload failed');
-  }
-  return data.secure_url as string;
+  // Fallback: local filesystem or base64 (Vercel)
+  return getUploadedFileUrl(file);
 }
 
 function createPostgresDb() {
@@ -801,6 +831,53 @@ async function startServer() {
     });
   });
 
+  // Google Sign-In: the browser sends the Google ID token (credential) from
+  // Google Identity Services. We verify it with Google, then find-or-create the user.
+  app.post('/api/auth/google', async (req, res) => {
+    const { credential } = req.body || {};
+    if (!credential) return res.status(400).json({ error: 'Missing Google credential' });
+
+    try {
+      // Verify the ID token against Google (validates signature, expiry, issuer).
+      const verifyRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+      const payload: any = await verifyRes.json();
+
+      if (!verifyRes.ok || payload.error) {
+        return res.status(401).json({ error: 'Invalid Google token' });
+      }
+      if (payload.aud !== GOOGLE_CLIENT_ID) {
+        return res.status(401).json({ error: 'Google token was issued for a different app' });
+      }
+      if (String(payload.email_verified) !== 'true' || !payload.email) {
+        return res.status(401).json({ error: 'Google account email is not verified' });
+      }
+
+      const email = String(payload.email).trim().toLowerCase();
+      const name = payload.name || payload.given_name || email.split('@')[0];
+      const photo = payload.picture || null;
+
+      let user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
+      if (!user) {
+        const result = await db.run(
+          'INSERT INTO users (name, email, provider, photo_url, email_verified, role, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [name, email, 'google', photo, true, 'resident', 'active']
+        );
+        user = await db.get('SELECT * FROM users WHERE id = ?', [result.lastID]);
+      } else if (!user.photo_url && photo) {
+        // Backfill the avatar for an existing account on first Google sign-in.
+        await db.run('UPDATE users SET photo_url = ?, email_verified = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [photo, true, user.id]);
+        user.photo_url = photo;
+      }
+
+      const token = jwt.sign({ id: user.id, role: user.role, name: user.name }, JWT_SECRET);
+      await logActivity(user.id, 'login');
+      res.json({ token, user: getPublicUser(user) });
+    } catch (e: any) {
+      console.error('Google sign-in failed:', e?.message || e);
+      res.status(500).json({ error: 'Google sign-in failed' });
+    }
+  });
+
   app.get('/api/auth/me', authenticateToken, async (req: any, res) => {
     const user = await db.get('SELECT id, name, email, role, photo_url, contact_number, address, purok, verified_at, email_verified, status, created_at FROM users WHERE id = ?', [req.user.id]);
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -1000,7 +1077,7 @@ async function startServer() {
       const hermesResults = await matchWithHermes(imagePath, candidates);
 
       // Build a map for quick lookup
-      const itemMap = new Map(candidates.map((item: any) => [Number(item.id), item]));
+      const itemMap = new Map<number, any>(candidates.map((item: any) => [Number(item.id), item]));
 
       // Merge Hermes results with item details
       const matches = hermesResults

@@ -2,7 +2,14 @@
 
 @theme {
   --font-sans: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --color-primary: #4f8cff;
+  --color-primary: #3b82f6;
+  --color-accent-teal: #10b981;
+  --color-accent-amber: #f59e0b;
+  --color-accent-purple: #8b5cf6;
+  --color-accent-coral: #ef4444;
+  --color-surface: #111b2e;
+  --color-surface-elevated: #152033;
+  --color-bg-deep: #0a0f1f;
 }
 
 @layer base {
@@ -11,12 +18,12 @@
   }
 
   body {
-    @apply min-h-screen bg-[#050816] text-slate-100 antialiased;
+    @apply min-h-screen bg-[#0a0f1f] text-slate-100 antialiased;
     font-family: var(--font-sans);
     background-image:
-      linear-gradient(135deg, rgba(79, 140, 255, 0.12) 0 1px, transparent 1px 90px),
-      linear-gradient(45deg, rgba(255, 92, 116, 0.10) 0 1px, transparent 1px 120px),
-      linear-gradient(180deg, #050816 0%, #090d23 48%, #0b1026 100%);
+      linear-gradient(135deg, rgba(59, 130, 246, 0.06) 0 1px, transparent 1px 90px),
+      linear-gradient(45deg, rgba(16, 185, 129, 0.05) 0 1px, transparent 1px 120px),
+      linear-gradient(180deg, #0a0f1f 0%, #0d1428 48%, #101b30 100%);
   }
 
   button,
@@ -29,23 +36,23 @@
 
 @layer components {
   .glass-card {
-    @apply rounded-lg border border-white/10 bg-[#10162d]/85 text-slate-100 shadow-[0_18px_55px_rgba(0,0,0,0.28)] backdrop-blur;
+    @apply rounded-lg border border-white/8 bg-[#111b2e]/90 text-slate-100 shadow-[0_18px_55px_rgba(0,0,0,0.32)] backdrop-blur;
   }
-  
+
   .glass-navbar {
-    @apply border-b border-white/10 bg-[#060a18]/90 text-white shadow-[0_10px_35px_rgba(0,0,0,0.28)] backdrop-blur;
+    @apply border-b border-white/8 bg-[#0b1224]/95 text-white shadow-[0_10px_35px_rgba(0,0,0,0.32)] backdrop-blur;
   }
 
   .form-field {
-    @apply w-full rounded-lg border border-white/10 bg-[#0a1022]/90 px-4 py-3 text-sm text-slate-100 shadow-sm transition placeholder:text-slate-500 focus:border-[#4f8cff] focus:outline-none focus:ring-4 focus:ring-[#4f8cff]/20 disabled:cursor-not-allowed disabled:bg-slate-900/80;
+    @apply w-full rounded-lg border border-white/8 bg-[#0d1428]/90 px-4 py-3 text-sm text-slate-100 shadow-sm transition placeholder:text-slate-500 focus:border-[#3b82f6] focus:outline-none focus:ring-4 focus:ring-[#3b82f6]/20 disabled:cursor-not-allowed disabled:bg-slate-900/80;
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-[#1b8cff] via-[#5b5cff] to-[#b84dff] px-4 py-2.5 text-sm font-bold text-white shadow-[0_12px_32px_rgba(64,110,255,0.30)] transition hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-[#4f8cff]/25 disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-[#2563eb] via-[#4f46e5] to-[#7c3aed] px-4 py-2.5 text-sm font-bold text-white shadow-[0_12px_32px_rgba(37,99,235,0.30)] transition hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-[#3b82f6]/25 disabled:cursor-not-allowed disabled:opacity-60;
   }
 
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-semibold text-slate-100 shadow-sm transition hover:border-[#ff5c74]/60 hover:bg-[#ff5c74]/10 focus:outline-none focus:ring-4 focus:ring-[#ff5c74]/20;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/8 px-4 py-2.5 text-sm font-semibold text-slate-100 shadow-sm transition hover:border-[#ef4444]/50 hover:bg-[#ef4444]/10 focus:outline-none focus:ring-4 focus:ring-[#ef4444]/20;
   }
 
   .editorial-heading {
@@ -53,5 +60,85 @@
     font-weight: 800;
     letter-spacing: 0;
   }
-
 }
+
+/* ============================================================================
+   LIGHT THEME
+   Activated by adding the `light` class to <html>. Because `html.light .x`
+   has higher specificity than the single-class Tailwind utility `.x`, these
+   rules override the dark-first inline colors used throughout the app.
+   ========================================================================== */
+html.light body {
+  @apply bg-slate-100 text-slate-900;
+  background-image:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0 1px, transparent 1px 90px),
+    linear-gradient(45deg, rgba(16, 185, 129, 0.04) 0 1px, transparent 1px 120px),
+    linear-gradient(180deg, #f1f5f9 0%, #eef2f7 48%, #e9eef5 100%);
+}
+
+/* Centralized component classes */
+html.light .glass-card {
+  @apply border-slate-900/10 bg-white/95 text-slate-900 shadow-[0_18px_55px_rgba(15,23,42,0.12)];
+}
+html.light .glass-navbar {
+  @apply border-slate-900/10 bg-white/90 text-slate-900 shadow-[0_10px_35px_rgba(15,23,42,0.10)];
+}
+html.light .form-field {
+  @apply border-slate-300 bg-white text-slate-900 shadow-sm placeholder:text-slate-400 disabled:bg-slate-100;
+}
+html.light .btn-secondary {
+  @apply border-slate-900/10 bg-slate-900/5 text-slate-800;
+}
+
+/* Deep page / surface backgrounds (incl. opacity variants) */
+html.light .bg-\[\#0a0f1f\],
+html.light .bg-\[\#0a0f1f\]\/80,
+html.light .bg-\[\#0a0f1f\]\/75,
+html.light .bg-\[\#0a0f1f\]\/70,
+html.light .bg-\[\#0a0f1f\]\/58 { background-color: #eef2f7; }
+
+html.light .bg-\[\#0b1224\],
+html.light .bg-\[\#0b1224\]\/95,
+html.light .bg-\[\#0b1224\]\/80 { background-color: #ffffff; }
+
+html.light .bg-\[\#0d1428\],
+html.light .bg-\[\#0d1428\]\/90,
+html.light .bg-\[\#0d1428\]\/70,
+html.light .bg-\[\#0d1730\],
+html.light .bg-\[\#152033\] { background-color: #f8fafc; }
+
+html.light .bg-\[\#111b2e\],
+html.light .bg-\[\#111b2e\]\/90 { background-color: #ffffff; }
+
+html.light .bg-\[\#070b1a\],
+html.light .bg-\[\#070b1a\]\/80 { background-color: #e2e8f0; }
+
+/* Translucent white fills become subtle dark tints on light backgrounds */
+html.light .bg-white\/5 { background-color: rgba(15, 23, 42, 0.04); }
+html.light .bg-white\/8 { background-color: rgba(15, 23, 42, 0.05); }
+html.light .bg-white\/10 { background-color: rgba(15, 23, 42, 0.06); }
+html.light .bg-white\/15 { background-color: rgba(15, 23, 42, 0.08); }
+
+/* Borders */
+html.light .border-white\/8 { border-color: rgba(15, 23, 42, 0.08); }
+html.light .border-white\/10 { border-color: rgba(15, 23, 42, 0.10); }
+html.light .border-white\/15 { border-color: rgba(15, 23, 42, 0.14); }
+html.light .border-white\/20 { border-color: rgba(15, 23, 42, 0.18); }
+
+/* Text colors */
+html.light .text-white,
+html.light .text-slate-100 { color: #0f172a; }
+html.light .text-slate-200 { color: #1e293b; }
+html.light .text-slate-300 { color: #334155; }
+html.light .text-slate-400 { color: #475569; }
+html.light .text-slate-500 { color: #64748b; }
+
+/* Light-blue accent text needs more contrast on white */
+html.light .text-\[\#93c5fd\],
+html.light .text-\[\#bfdbfe\] { color: #2563eb; }
+html.light .text-\[\#fca5a5\],
+html.light .text-\[\#fecaca\] { color: #dc2626; }
+html.light .text-\[\#fdba74\] { color: #c2410c; }
+
+/* Rings that assume a dark base */
+html.light .ring-white\/10 { --tw-ring-color: rgba(15, 23, 42, 0.08); }

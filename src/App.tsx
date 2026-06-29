@@ -5,7 +5,8 @@ import {
   Bell, Menu, X, LayoutDashboard, LogOut, ChevronLeft, ChevronRight, TrendingUp, 
   Award, AlertCircle, CheckCircle, XCircle, Eye, Edit, Trash2, 
   EyeOff, QrCode, FileText, Download, Share2, Filter, ArrowLeft, Home as HomeIcon,
-  BarChart3, Users, Package, MessageSquare, Star, AlertTriangle, ImagePlus, Database, History, Camera, ScanSearch
+  BarChart3, Users, Package, MessageSquare, Star, AlertTriangle, ImagePlus, Database, History, Camera, ScanSearch,
+  Sun, Moon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -20,8 +21,10 @@ function cn(...inputs: ClassValue[]) {
 const API_URL = '';
 const logoUrl = new URL('./assets/lostlink-logo-cropped.png', import.meta.url).href;
 const brgyLoginBgUrl = new URL('./assets/barangay-hall-login-bg.png', import.meta.url).href;
+const jumbotronBgUrl = new URL('./assets/barangay-jumbotron.jpg', import.meta.url).href;
 const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
 const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '577770716829-k94lqo6lhhh18ssts0ej1lhu9glt5qu8.apps.googleusercontent.com';
 
 const GoogleIcon = ({ className = 'h-5 w-5' }: { className?: string }) => (
   <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
@@ -170,6 +173,12 @@ function AuthProvider({ children }: { children: ReactNode }) {
     saveSession(token, nextUser);
   };
 
+  const googleLogin = async (credential: string) => {
+    const data = await apiCall('/api/auth/google', { method: 'POST', body: JSON.stringify({ credential }) });
+    saveSession(data.token, data.user);
+    return data;
+  };
+
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -177,7 +186,7 @@ function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, completeGoogleLogin, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, register, completeGoogleLogin, googleLogin, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );
@@ -186,6 +195,44 @@ function AuthProvider({ children }: { children: ReactNode }) {
 function useAuth() {
   return useContext(AuthContext);
 }
+
+// Theme (light/dark). The `light` class on <html> drives the CSS overrides in index.css.
+// The initial class is applied by an inline script in index.html to avoid a flash.
+function useTheme() {
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    typeof document !== 'undefined' && document.documentElement.classList.contains('light') ? 'light' : 'dark'
+  );
+
+  const toggleTheme = () => {
+    setTheme((prev) => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      document.documentElement.classList.toggle('light', next === 'light');
+      try { localStorage.setItem('theme', next); } catch (e) {}
+      return next;
+    });
+  };
+
+  return { theme, toggleTheme };
+}
+
+const ThemeToggle = ({ className }: { className?: string }) => {
+  const { theme, toggleTheme } = useTheme();
+  const isLight = theme === 'light';
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      title={isLight ? 'Switch to dark mode' : 'Switch to light mode'}
+      aria-label={isLight ? 'Switch to dark mode' : 'Switch to light mode'}
+      className={cn(
+        "inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-300 transition hover:bg-white/10 hover:text-white",
+        className
+      )}
+    >
+      {isLight ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
+    </button>
+  );
+};
 
 // ==================== CONSTANTS ====================
 const CATEGORIES = [
@@ -232,14 +279,14 @@ const ZONES = [
 ];
 
 const STATUS_COLORS: any = {
-  pending: 'border border-[#ffb84d]/30 bg-[#ffb84d]/15 text-[#ffd08a]',
-  approved: 'border border-[#4f8cff]/30 bg-[#4f8cff]/15 text-[#9dc4ff]',
-  posted: 'border border-[#19d7b7]/30 bg-[#19d7b7]/15 text-[#75f7df]',
-  matched: 'border border-[#b84dff]/30 bg-[#b84dff]/15 text-[#d8a7ff]',
-  claimed: 'border border-[#ff5c74]/30 bg-[#ff5c74]/15 text-[#ffa2ae]',
-  returned: 'border border-[#19d7b7]/30 bg-[#19d7b7]/15 text-[#75f7df]',
-  rejected: 'border border-[#ff5c74]/35 bg-[#ff5c74]/20 text-[#ff9aa8]',
-  archived: 'border border-white/15 bg-white/10 text-slate-300',
+  pending: 'border border-[#f59e0b]/30 bg-[#f59e0b]/15 text-[#fcd34d]',
+  approved: 'border border-[#3b82f6]/30 bg-[#3b82f6]/15 text-[#bfdbfe]',
+  posted: 'border border-[#10b981]/30 bg-[#10b981]/15 text-[#6ee7b7]',
+  matched: 'border border-[#8b5cf6]/30 bg-[#8b5cf6]/15 text-[#c4b5fd]',
+  claimed: 'border border-[#ef4444]/30 bg-[#ef4444]/15 text-[#fca5a5]',
+  returned: 'border border-[#10b981]/30 bg-[#10b981]/15 text-[#6ee7b7]',
+  rejected: 'border border-[#ef4444]/35 bg-[#ef4444]/20 text-[#fca5a5]',
+  archived: 'border border-white/10 bg-white/8 text-slate-300',
 };
 
 const formatMatchScore = (score: unknown) => {
@@ -249,10 +296,10 @@ const formatMatchScore = (score: unknown) => {
 };
 
 const ADMIN_STAT_STYLES: Record<string, { bg: string; text: string }> = {
-  blue: { bg: 'bg-[#1b8cff]/15', text: 'text-[#82b9ff]' },
-  amber: { bg: 'bg-[#ffb84d]/15', text: 'text-[#ffd08a]' },
-  orange: { bg: 'bg-[#ff5c74]/15', text: 'text-[#ffa2ae]' },
-  green: { bg: 'bg-[#19d7b7]/15', text: 'text-[#75f7df]' },
+  blue: { bg: 'bg-[#2563eb]/15', text: 'text-[#93c5fd]' },
+  amber: { bg: 'bg-[#f59e0b]/15', text: 'text-[#fcd34d]' },
+  orange: { bg: 'bg-[#ef4444]/15', text: 'text-[#fca5a5]' },
+  green: { bg: 'bg-[#10b981]/15', text: 'text-[#6ee7b7]' },
 };
 
 // ==================== COMPONENTS ====================
@@ -294,11 +341,11 @@ const Sidebar = ({
         "flex items-center rounded-lg px-3 py-2.5 text-sm font-semibold transition-all duration-200",
         collapsed ? "justify-center gap-0" : "gap-3",
         location.pathname === link.path 
-          ? "bg-[#4f8cff]/15 text-[#9dc4ff] shadow-sm" 
+          ? "bg-[#3b82f6]/15 text-[#bfdbfe] shadow-sm" 
           : "text-slate-400 hover:bg-white/5 hover:text-white"
       )}
     >
-      <link.icon className={cn("h-5 w-5", location.pathname === link.path ? "text-[#9dc4ff]" : "text-slate-500")} />
+      <link.icon className={cn("h-5 w-5", location.pathname === link.path ? "text-[#bfdbfe]" : "text-slate-500")} />
       <span className={cn("whitespace-nowrap transition-opacity duration-200", collapsed && "sr-only")}>{link.name}</span>
     </Link>
   );
@@ -306,7 +353,7 @@ const Sidebar = ({
   return (
     <>
       {/* Mobile Top Header */}
-      <div className="sticky top-0 z-50 flex h-16 items-center justify-between border-b border-white/10 bg-[#070b1a] px-4 md:hidden">
+      <div className="sticky top-0 z-50 flex h-16 items-center justify-between border-b border-white/10 bg-[#0b1224] px-4 md:hidden">
         <Link to="/" className="flex items-center gap-2">
           <div className="h-8 w-8 overflow-hidden rounded-md bg-white p-0.5">
             <img src={logoUrl} alt="" className="h-full w-full object-contain" />
@@ -331,7 +378,7 @@ const Sidebar = ({
       </AnimatePresence>
 
       <aside className={cn(
-        "fixed bottom-0 left-0 top-16 z-50 flex flex-col border-r border-white/10 bg-[#070b1a] transition-all duration-300 ease-in-out md:inset-y-0 md:top-0 md:translate-x-0",
+        "fixed bottom-0 left-0 top-16 z-50 flex flex-col border-r border-white/10 bg-[#0b1224] transition-all duration-300 ease-in-out md:inset-y-0 md:top-0 md:translate-x-0",
         collapsed ? "w-64 md:w-20" : "w-64",
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}>
@@ -342,7 +389,7 @@ const Sidebar = ({
             </div>
             <div className={cn("min-w-0 leading-tight", collapsed && "hidden")}>
               <span className="block text-lg font-black tracking-tight text-white whitespace-nowrap">Paknaan</span>
-              <span className="block text-[10px] font-bold uppercase tracking-wider text-[#82b9ff] whitespace-nowrap">LostLink System</span>
+              <span className="block text-[10px] font-bold uppercase tracking-wider text-[#93c5fd] whitespace-nowrap">LostLink System</span>
             </div>
           </Link>
           <button
@@ -397,13 +444,17 @@ const Sidebar = ({
         </div>
 
         <div className={cn("border-t border-white/10", collapsed ? "p-3" : "p-4")}>
+          <div className={cn("mb-3 flex items-center", collapsed ? "justify-center" : "justify-between")}>
+            <span className={cn("text-xs font-semibold text-slate-400", collapsed && "hidden")}>Appearance</span>
+            <ThemeToggle />
+          </div>
           {user ? (
             <div className={cn("flex items-center", collapsed ? "justify-center" : "gap-3")}>
               <div className="h-10 w-10 overflow-hidden rounded-full border border-white/20 bg-white/10">
                 {user.photo_url ? (
                   <img src={user.photo_url} alt="" className="h-full w-full object-cover" />
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center text-sm font-bold text-[#82b9ff]">
+                  <div className="flex h-full w-full items-center justify-center text-sm font-bold text-[#93c5fd]">
                     {user.name[0]}
                   </div>
                 )}
@@ -412,7 +463,7 @@ const Sidebar = ({
                 <p className="truncate text-sm font-bold text-white">{user.name}</p>
                 <button 
                   onClick={onLogout}
-                  className="flex items-center gap-1.5 text-xs font-semibold text-[#ffa2ae] transition hover:text-[#ffb3bd]"
+                  className="flex items-center gap-1.5 text-xs font-semibold text-[#fca5a5] transition hover:text-[#fecaca]"
                 >
                   <LogOut className="h-3 w-3" />
                   Logout
@@ -441,7 +492,7 @@ const StatusBadge = ({ status }: { status: string }) => (
   </span>
 );
 
-const ItemImage = ({ item, className, fallbackClassName = 'relative flex h-16 w-16 items-center justify-center rounded-lg bg-white/10 text-[#9dc4ff] ring-1 ring-white/15', iconClassName = 'h-8 w-8 transition group-hover:text-white' }: { item: any; className?: string; fallbackClassName?: string; iconClassName?: string }) => {
+const ItemImage = ({ item, className, fallbackClassName = 'relative flex h-16 w-16 items-center justify-center rounded-lg bg-white/10 text-[#bfdbfe] ring-1 ring-white/15', iconClassName = 'h-8 w-8 transition group-hover:text-white' }: { item: any; className?: string; fallbackClassName?: string; iconClassName?: string }) => {
   const [failed, setFailed] = useState(false);
   const imageUrl = item?.image_url;
 
@@ -473,7 +524,7 @@ const ProofPreview = ({ url, alt = 'Claim proof', className = 'h-full w-full obj
 
   if (!url || failed || isLegacyLocalUpload) {
     return (
-      <div className="flex h-full min-h-48 flex-col items-center justify-center gap-3 rounded-lg border border-white/10 bg-[#070b1a] p-6 text-center text-slate-400">
+      <div className="flex h-full min-h-48 flex-col items-center justify-center gap-3 rounded-lg border border-white/10 bg-[#0b1224] p-6 text-center text-slate-400">
         <FileText className="h-10 w-10 text-slate-500" />
         <p className="text-sm">{isLegacyLocalUpload ? 'This proof was saved to local uploads and is not available on Vercel.' : 'Proof preview is unavailable.'}</p>
       </div>
@@ -484,10 +535,10 @@ const ProofPreview = ({ url, alt = 'Claim proof', className = 'h-full w-full obj
 };
 
 const ItemCard = ({ item, onClick }: { item: any, onClick?: () => void }) => (
-  <motion.div whileHover={{ y: -3 }} className="glass-card group flex h-full cursor-pointer flex-col overflow-hidden transition-shadow hover:shadow-xl hover:shadow-[#1b8cff]/15" onClick={onClick}>
-    <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-[#070b1a]">
-      <div className="absolute left-0 top-8 h-3 w-1/2 bg-[#1b8cff]/70" />
-      <div className="absolute bottom-10 right-0 h-3 w-2/3 bg-[#ff5c74]/70" />
+  <motion.div whileHover={{ y: -3 }} className="glass-card group flex h-full cursor-pointer flex-col overflow-hidden transition-shadow hover:shadow-xl hover:shadow-[#2563eb]/15" onClick={onClick}>
+    <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-[#0b1224]">
+      <div className="absolute left-0 top-8 h-3 w-1/2 bg-[#2563eb]/70" />
+      <div className="absolute bottom-10 right-0 h-3 w-2/3 bg-[#ef4444]/70" />
       <ItemImage item={item} />
     </div>
     <div className="flex flex-1 flex-col gap-3 p-4">
@@ -513,7 +564,7 @@ const ItemCard = ({ item, onClick }: { item: any, onClick?: () => void }) => (
 const EmptyState = ({ icon: Icon, title, message, action }: { icon: any, title: string, message: string, action?: ReactNode }) => (
   <div className="mx-auto max-w-md py-12 text-center">
     <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-lg border border-white/10 bg-white/10">
-      <Icon className="h-7 w-7 text-[#9dc4ff]" />
+      <Icon className="h-7 w-7 text-[#bfdbfe]" />
     </div>
     <h3 className="mb-2 text-lg font-semibold text-white">{title}</h3>
     <p className="mb-5 text-sm text-slate-400">{message}</p>
@@ -550,6 +601,120 @@ const ProtectedRoute = ({ children, roles }: { children: ReactNode, roles?: stri
 
 // ==================== PAGES ====================
 
+const LandingHeader = () => {
+  const { user } = useAuth();
+  const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const navLinks = [
+    { name: 'Home', path: '/' },
+    { name: 'Lost Items', path: '/items/lost' },
+    { name: 'Found Items', path: '/items/found' },
+    { name: 'Report Item', path: '/post' },
+    { name: 'Image Match', path: '/image-match' },
+  ];
+
+  return (
+    <header className="sticky top-0 z-50 border-b border-white/10 bg-[#0a0f1f]/80 backdrop-blur-xl">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-5 sm:px-8 lg:px-12">
+        <Link to="/" className="flex items-center gap-3">
+          <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white">
+            <img src={logoUrl} alt="" className="h-full w-full object-contain p-1" />
+          </div>
+          <div className="leading-tight">
+            <span className="block text-base font-black tracking-tight text-white">Paknaan</span>
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-[#93c5fd]">LostLink System</span>
+          </div>
+        </Link>
+
+        {/* Desktop horizontal nav */}
+        <nav className="hidden items-center gap-1 lg:flex">
+          {navLinks.map((link) => (
+            <Link
+              key={link.name}
+              to={link.path}
+              className={cn(
+                "rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors",
+                location.pathname === link.path
+                  ? "bg-white/10 text-white"
+                  : "text-slate-300 hover:bg-white/5 hover:text-white"
+              )}
+            >
+              {link.name}
+            </Link>
+          ))}
+        </nav>
+
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          {user ? (
+            <Link to="/dashboard" className="hidden btn-primary px-4 py-2 text-sm sm:inline-flex">
+              <LayoutDashboard className="h-4 w-4" />
+              Dashboard
+            </Link>
+          ) : (
+            <>
+              <Link to="/login" className="hidden rounded-lg px-4 py-2 text-sm font-semibold text-slate-200 transition hover:text-white sm:inline-flex">
+                Sign In
+              </Link>
+              <Link to="/signup" className="hidden btn-primary px-4 py-2 text-sm sm:inline-flex">
+                Get Started
+              </Link>
+            </>
+          )}
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            className="rounded-lg p-2 text-slate-200 transition hover:bg-white/10 lg:hidden"
+            aria-label="Toggle menu"
+          >
+            {menuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile dropdown nav */}
+      <AnimatePresence>
+        {menuOpen && (
+          <motion.nav
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden border-t border-white/10 bg-[#0a0f1f] lg:hidden"
+          >
+            <div className="space-y-1 px-5 py-4 sm:px-8">
+              {navLinks.map((link) => (
+                <Link
+                  key={link.name}
+                  to={link.path}
+                  onClick={() => setMenuOpen(false)}
+                  className={cn(
+                    "block rounded-lg px-3.5 py-2.5 text-sm font-semibold transition-colors",
+                    location.pathname === link.path
+                      ? "bg-white/10 text-white"
+                      : "text-slate-300 hover:bg-white/5 hover:text-white"
+                  )}
+                >
+                  {link.name}
+                </Link>
+              ))}
+              <div className="mt-2 grid gap-2 border-t border-white/10 pt-3 sm:hidden">
+                {user ? (
+                  <Link to="/dashboard" onClick={() => setMenuOpen(false)} className="btn-primary py-2.5 text-sm">Dashboard</Link>
+                ) : (
+                  <>
+                    <Link to="/login" onClick={() => setMenuOpen(false)} className="btn-secondary py-2.5 text-sm">Sign In</Link>
+                    <Link to="/signup" onClick={() => setMenuOpen(false)} className="btn-primary py-2.5 text-sm">Get Started</Link>
+                  </>
+                )}
+              </div>
+            </div>
+          </motion.nav>
+        )}
+      </AnimatePresence>
+    </header>
+  );
+};
+
 const Home = () => {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
@@ -571,99 +736,68 @@ const Home = () => {
 
   return (
     <div className="bg-transparent">
+      <LandingHeader />
       <main className="w-full text-slate-100">
-        <section className="mx-auto grid max-w-7xl gap-8 px-5 py-8 sm:px-8 lg:grid-cols-[1.05fr_0.95fr] lg:px-12 lg:py-12">
-          <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col justify-between">
-            <div>
-              <img src={logoUrl} alt="LostLink Brgy Paknaan" className="mb-8 h-auto w-56 object-contain sm:w-64" />
-              <p className="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-[#82b9ff]">Barangay Paknaan lost and found</p>
-              <h1 className="editorial-heading max-w-2xl text-4xl leading-[1.02] text-white sm:text-6xl">
+        {/* Jumbotron hero with barangay hall background at low opacity */}
+        <section className="relative isolate overflow-hidden">
+          <div
+            className="absolute inset-0 -z-10 bg-cover bg-center opacity-[0.18]"
+            style={{ backgroundImage: `url(${jumbotronBgUrl})` }}
+            aria-hidden="true"
+          />
+          <div className="absolute inset-0 -z-10 bg-gradient-to-b from-[#0a0f1f]/70 via-[#0a0f1f]/85 to-[#0a0f1f]" aria-hidden="true" />
+
+          <div className="mx-auto max-w-4xl px-5 py-20 text-center sm:px-8 sm:py-28 lg:py-32">
+            <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.24em] text-[#bfdbfe] backdrop-blur">
+                <ShieldCheck className="h-4 w-4" />
+                Barangay Paknaan Lost &amp; Found
+              </span>
+              <h1 className="editorial-heading mx-auto mt-6 max-w-3xl text-4xl leading-[1.04] text-white sm:text-6xl">
                 A faster way to report, verify, and return belongings.
               </h1>
-              <p className="mt-5 max-w-xl text-sm leading-7 text-slate-300 sm:text-base">
-                LostLink keeps resident reports, found-item postings, barangay review, and claim verification in one focused workflow.
+              <p className="mx-auto mt-5 max-w-2xl text-sm leading-7 text-slate-300 sm:text-base">
+                LostLink keeps resident reports, found-item postings, barangay review, and claim verification in one focused, official workflow.
               </p>
-            </div>
 
-            <div className="mt-8 rounded-lg border border-white/10 bg-white/10 p-4 shadow-sm shadow-black/20">
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#82b9ff]" />
-                  <input
-                    type="text"
-                    placeholder="Search wallet, phone, keys..."
-                    className="form-field pl-11"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && runSearch()}
-                  />
+              <div className="mx-auto mt-9 max-w-2xl rounded-xl border border-white/10 bg-white/10 p-3 shadow-xl shadow-black/30 backdrop-blur">
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-[#93c5fd]" />
+                    <input
+                      type="text"
+                      placeholder="Search wallet, phone, keys..."
+                      className="form-field pl-11"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && runSearch()}
+                    />
+                  </div>
+                  <button onClick={runSearch} className="btn-primary sm:w-32">
+                    Search
+                  </button>
                 </div>
-                <button onClick={runSearch} className="btn-primary sm:w-28">
-                  Search
-                </button>
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <button onClick={() => navigate('/post')} className="btn-primary py-3">
+
+              <div className="mx-auto mt-5 flex max-w-2xl flex-col gap-3 sm:flex-row sm:justify-center">
+                <button onClick={() => navigate('/post')} className="btn-primary px-6 py-3">
                   <PlusCircle className="h-5 w-5" />
                   Report an Item
                 </button>
-                <button onClick={() => navigate('/items/found')} className="btn-secondary py-3">
+                <button onClick={() => navigate('/items/found')} className="btn-secondary px-6 py-3">
                   Browse Found Items
                   <ChevronRight className="h-4 w-4" />
                 </button>
               </div>
-            </div>
-          </motion.div>
-
-          <aside className="rounded-lg border border-white/10 bg-[#070b1a] p-5 text-white shadow-xl shadow-black/30">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#82b9ff]">Today at the desk</p>
-                <h2 className="mt-2 text-xl font-bold">Community report board</h2>
-              </div>
-              <span className="rounded-full bg-[#ff5c74] px-3 py-1 text-xs font-bold text-white">Live</span>
-            </div>
-
-            <div className="space-y-3">
-              {[
-                { item: 'Blue backpack', meta: 'Zone Agbate', status: 'Pending review' },
-                { item: 'Black wallet', meta: 'Zone Petchay', status: 'Posted' },
-                { item: 'House keys', meta: 'Zone Ubi', status: 'Claim submitted' },
-              ].map((row) => (
-                <div key={row.item} className="rounded-md bg-white/10 p-4 ring-1 ring-white/10">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="font-semibold">{row.item}</p>
-                      <p className="mt-1 text-xs text-slate-400">{row.meta}</p>
-                    </div>
-                    <span className="text-right text-xs font-semibold text-[#9dc4ff]">{row.status}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-md bg-gradient-to-br from-[#1b8cff] via-[#5b5cff] to-[#b84dff] p-4 text-white">
-                <QrCode className="mb-4 h-6 w-6" />
-                <p className="text-sm font-bold">QR handover slips</p>
-                <p className="mt-1 text-xs leading-5 text-blue-50">Verify approved claims at release.</p>
-              </div>
-              <div className="rounded-md border border-white/10 p-4">
-                <p className="text-sm text-slate-300">Match confidence</p>
-                <p className="mt-2 text-3xl font-black">95%</p>
-                <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
-                  <div className="h-full w-[78%] rounded-full bg-[#ff5c74]" />
-                </div>
-              </div>
-            </div>
-          </aside>
+            </motion.div>
+          </div>
         </section>
 
-        <section className="border-y border-white/10 bg-[#080d20]/70 px-5 py-6 sm:px-8 lg:px-12">
+        <section className="border-y border-white/10 bg-[#0d1428]/70 px-5 py-6 sm:px-8 lg:px-12">
           <div className="mx-auto grid max-w-7xl grid-cols-2 gap-4 md:grid-cols-4">
             {stats.map((stat) => (
               <div key={stat.label} className="rounded-lg border border-white/10 bg-white/10 p-4">
-                <stat.icon className="mb-4 h-5 w-5 text-[#82b9ff]" />
+                <stat.icon className="mb-4 h-5 w-5 text-[#93c5fd]" />
                 <div className="text-2xl font-black text-white">{stat.value}</div>
                 <div className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{stat.label}</div>
               </div>
@@ -673,7 +807,7 @@ const Home = () => {
 
         <section className="mx-auto grid max-w-7xl gap-8 px-5 py-10 sm:px-8 lg:grid-cols-[0.8fr_1.2fr] lg:px-12">
           <div>
-            <p className="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-[#82b9ff]">How it moves</p>
+            <p className="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-[#93c5fd]">How it moves</p>
             <h2 className="editorial-heading text-3xl leading-tight text-white">A practical workflow for residents and staff.</h2>
             <p className="mt-4 text-sm leading-7 text-slate-300">
               The interface keeps the work simple: collect details, check reports, and document a verified return.
@@ -683,7 +817,7 @@ const Home = () => {
           <div className="grid gap-4 md:grid-cols-3">
             {workflow.map((step, index) => (
               <div key={step.title} className="rounded-lg border border-white/10 bg-white/10 p-5">
-                <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-md bg-[#101a3a] text-[#9dc4ff]">
+                <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-md bg-[#152033] text-[#bfdbfe]">
                   <step.icon className="h-5 w-5" />
                 </div>
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Step {index + 1}</p>
@@ -694,15 +828,15 @@ const Home = () => {
           </div>
         </section>
 
-        <section className="bg-[#070b1a]/80 px-5 py-10 text-white sm:px-8 lg:px-12">
+        <section className="bg-[#0b1224]/80 px-5 py-10 text-white sm:px-8 lg:px-12">
           <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-2">
           <div className="rounded-lg border border-white/10 bg-white/5 p-6">
-            <Users className="mb-5 h-6 w-6 text-[#82b9ff]" />
+            <Users className="mb-5 h-6 w-6 text-[#93c5fd]" />
             <h3 className="editorial-heading text-2xl leading-tight">For residents</h3>
             <p className="mt-3 text-sm leading-7 text-slate-400">Submit a clear report, search recent posts, and track item claims without visiting multiple offices first.</p>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 p-6">
-            <LayoutDashboard className="mb-5 h-6 w-6 text-[#ff8fa0]" />
+            <LayoutDashboard className="mb-5 h-6 w-6 text-[#f87171]" />
             <h3 className="editorial-heading text-2xl leading-tight">For barangay staff</h3>
             <p className="mt-3 text-sm leading-7 text-slate-400">Review reports, monitor claims, and release returned items with a consistent verification trail.</p>
           </div>
@@ -710,6 +844,72 @@ const Home = () => {
         </section>
 
       </main>
+    </div>
+  );
+};
+
+// Loads Google Identity Services once and renders the official "Sign in with Google" button.
+let googleScriptPromise: Promise<void> | null = null;
+const loadGoogleScript = () => {
+  if (googleScriptPromise) return googleScriptPromise;
+  googleScriptPromise = new Promise<void>((resolve, reject) => {
+    if ((window as any).google?.accounts?.id) return resolve();
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load Google Sign-In'));
+    document.head.appendChild(script);
+  });
+  return googleScriptPromise;
+};
+
+const GoogleSignInButton = ({ onError }: { onError?: (message: string) => void }) => {
+  const { googleLogin } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const buttonRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadGoogleScript()
+      .then(() => {
+        if (cancelled || !buttonRef.current) return;
+        const google = (window as any).google;
+        google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: async (response: any) => {
+            try {
+              await googleLogin(response.credential);
+              const from = (location.state as any)?.from || '/dashboard';
+              navigate(from, { replace: true });
+            } catch (err: any) {
+              onError?.(err?.message || 'Google sign-in failed');
+            }
+          },
+        });
+        google.accounts.id.renderButton(buttonRef.current, {
+          theme: 'filled_black',
+          size: 'large',
+          shape: 'pill',
+          text: 'continue_with',
+          width: 320,
+          logo_alignment: 'center',
+        });
+      })
+      .catch(() => onError?.('Could not load Google Sign-In. Check your connection.'));
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div className="my-5">
+      <div className="mb-4 flex items-center gap-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <span className="h-px flex-1 bg-white/10" />
+        or
+        <span className="h-px flex-1 bg-white/10" />
+      </div>
+      <div ref={buttonRef} className="flex justify-center" />
     </div>
   );
 };
@@ -757,8 +957,8 @@ const Login = () => {
         style={{ backgroundImage: `url("${brgyLoginBgUrl}")` }}
         aria-hidden="true"
       />
-      <div className="absolute inset-0 bg-[#050816]/58" aria-hidden="true" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(79,140,255,0.10),transparent_46%),linear-gradient(180deg,rgba(5,8,22,0.22),#050816_98%)]" aria-hidden="true" />
+      <div className="absolute inset-0 bg-[#0a0f1f]/58" aria-hidden="true" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(79,140,255,0.10),transparent_46%),linear-gradient(180deg,rgba(5,8,22,0.22),#0a0f1f_98%)]" aria-hidden="true" />
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card relative z-10 w-full max-w-md p-6 sm:p-8">
         <div className="text-center mb-8">
@@ -766,7 +966,7 @@ const Login = () => {
           <h1 className="text-2xl font-bold text-white">Welcome Back</h1>
           <p className="text-slate-400">Sign in to your account</p>
         </div>
-        {error && <div className="mb-4 rounded-lg border border-[#ff5c74]/30 bg-[#ff5c74]/15 px-4 py-3 text-[#ffb3bd]">{error}</div>}
+        {error && <div className="mb-4 rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/15 px-4 py-3 text-[#fecaca]">{error}</div>}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-300">Email</label>
@@ -798,13 +998,14 @@ const Login = () => {
               type="checkbox"
               checked={rememberMe}
               onChange={(e) => setRememberMe(e.target.checked)}
-              className="h-4 w-4 rounded border-white/20 bg-[#0a1022] text-[#4f8cff] focus:ring-[#4f8cff]"
+              className="h-4 w-4 rounded border-white/20 bg-[#0d1428] text-[#3b82f6] focus:ring-[#3b82f6]"
             />
             <span>Remember me</span>
           </label>
           <button type="submit" disabled={loading} className="btn-primary w-full py-3">{loading ? 'Signing in...' : 'Sign In'}</button>
         </form>
-        <p className="mt-6 text-center text-slate-400">Don't have an account? <Link to="/signup" className="font-semibold text-[#9dc4ff]">Sign up</Link></p>
+        <GoogleSignInButton onError={setError} />
+        <p className="mt-6 text-center text-slate-400">Don't have an account? <Link to="/signup" className="font-semibold text-[#bfdbfe]">Sign up</Link></p>
       </motion.div>
     </div>
   );
@@ -839,7 +1040,7 @@ const SignUp = () => {
           <h1 className="text-2xl font-bold text-white">Create Account</h1>
           <p className="text-slate-400">Join Barangay Paknaan LostLink</p>
         </div>
-        {error && <div className="mb-4 rounded-lg border border-[#ff5c74]/30 bg-[#ff5c74]/15 px-4 py-3 text-[#ffb3bd]">{error}</div>}
+        {error && <div className="mb-4 rounded-lg border border-[#ef4444]/30 bg-[#ef4444]/15 px-4 py-3 text-[#fecaca]">{error}</div>}
         <form onSubmit={handleSubmit} className="space-y-4">
           <input type="text" placeholder="Full Name" value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="form-field" required />
           <input type="email" placeholder="Email Address" value={form.email} onChange={e => setForm({...form, email: e.target.value})} className="form-field" required />
@@ -852,10 +1053,11 @@ const SignUp = () => {
             <option value="">Select Zone / Purok</option>
             {ZONES.map(z => <option key={z} value={z}>{z}</option>)}
           </select>
-          <input type="url" placeholder="Facebook Link (Optional)" value={form.facebook_url} onChange={e => setForm({...form, facebook_url: e.target.value})} className="form-field" />
+          <input type="text" placeholder="Facebook Name (Optional)" value={form.facebook_url} onChange={e => setForm({...form, facebook_url: e.target.value})} className="form-field" />
           <button type="submit" disabled={loading} className="btn-primary w-full py-3">{loading ? 'Creating...' : 'Create Account'}</button>
         </form>
-        <p className="mt-6 text-center text-slate-400">Already have an account? <Link to="/login" className="font-semibold text-[#9dc4ff]">Sign in</Link></p>
+        <GoogleSignInButton onError={setError} />
+        <p className="mt-6 text-center text-slate-400">Already have an account? <Link to="/login" className="font-semibold text-[#bfdbfe]">Sign in</Link></p>
       </motion.div>
     </div>
   );
@@ -912,7 +1114,7 @@ const ItemsPage = ({ type }: { type: 'lost' | 'found' }) => {
 
       <div className="glass-card mb-6 grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_220px_160px]">
         <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[#82b9ff]" />
+          <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[#93c5fd]" />
           <input type="text" placeholder="Search items..." value={search} onChange={(e) => setSearch(e.target.value)} className="form-field pl-10" />
         </div>
         <select value={category} onChange={(e) => setCategory(e.target.value)} className="form-field">
@@ -991,7 +1193,7 @@ const ItemDetailPage = () => {
       </button>
 
       <div className="glass-card overflow-hidden">
-        <div className="flex aspect-[16/9] max-h-[360px] items-center justify-center bg-[#070b1a]">
+        <div className="flex aspect-[16/9] max-h-[360px] items-center justify-center bg-[#0b1224]">
           <ItemImage
             item={item}
             className="h-full w-full object-cover"
@@ -1003,7 +1205,7 @@ const ItemDetailPage = () => {
         <div className="p-5 sm:p-8">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
-              <span className={cn("rounded-full border px-3 py-1 text-sm font-medium", item.type === 'lost' ? 'border-[#ffb84d]/30 bg-[#ffb84d]/15 text-[#ffd08a]' : 'border-[#19d7b7]/30 bg-[#19d7b7]/15 text-[#75f7df]')}>
+              <span className={cn("rounded-full border px-3 py-1 text-sm font-medium", item.type === 'lost' ? 'border-[#f59e0b]/30 bg-[#f59e0b]/15 text-[#fcd34d]' : 'border-[#10b981]/30 bg-[#10b981]/15 text-[#6ee7b7]')}>
                 {item.type.toUpperCase()}
               </span>
               <h1 className="mt-3 break-words text-2xl font-bold text-white sm:text-3xl">{item.title}</h1>
@@ -1037,12 +1239,12 @@ const ItemDetailPage = () => {
 
           <div className="flex flex-col gap-4 border-t border-white/10 pt-6 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-2">
-              <User className="h-5 w-5 text-[#82b9ff]" />
+              <User className="h-5 w-5 text-[#93c5fd]" />
               <span className="min-w-0 truncate text-slate-400">Reported by {item.reporter_name || 'Anonymous'}</span>
             </div>
             <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
               {user?.role === 'admin' && (
-                <button onClick={handleDeleteItem} disabled={deleting} className="btn-secondary w-full border-[#ff5c74]/40 bg-[#ff5c74]/10 text-[#ffa2ae] hover:bg-[#ff5c74]/20 sm:w-auto">
+                <button onClick={handleDeleteItem} disabled={deleting} className="btn-secondary w-full border-[#ef4444]/40 bg-[#ef4444]/10 text-[#fca5a5] hover:bg-[#ef4444]/20 sm:w-auto">
                   <Trash2 className="h-5 w-5" />
                   <span>{deleting ? 'Deleting...' : 'Delete Item'}</span>
                 </button>
@@ -1143,13 +1345,13 @@ const PostItemPage = () => {
 
       <div className="glass-card p-5 sm:p-8">
         <div className="mb-6 flex items-center gap-3 border-b border-white/10 pb-4 text-2xl font-bold text-white">
-          <AlertCircle className={type === 'lost' ? "text-[#ffb84d]" : "text-[#19d7b7]"} />
+          <AlertCircle className={type === 'lost' ? "text-[#f59e0b]" : "text-[#10b981]"} />
           <h2>Report {type === 'lost' ? 'Lost' : 'Found'} Item</h2>
         </div>
 
-        <div className="mb-6 grid grid-cols-2 gap-3 rounded-lg border border-white/10 bg-[#070b1a] p-1">
-          <button onClick={() => setType('lost')} className={cn("rounded-md py-2.5 text-sm font-semibold transition-colors", type === 'lost' ? "bg-[#ffb84d] text-[#121018] shadow-sm" : "text-slate-300 hover:bg-white/10")}>Lost Item</button>
-          <button onClick={() => setType('found')} className={cn("rounded-md py-2.5 text-sm font-semibold transition-colors", type === 'found' ? "bg-[#19d7b7] text-[#071417] shadow-sm" : "text-slate-300 hover:bg-white/10")}>Found Item</button>
+        <div className="mb-6 grid grid-cols-2 gap-3 rounded-lg border border-white/10 bg-[#0b1224] p-1">
+          <button onClick={() => setType('lost')} className={cn("rounded-md py-2.5 text-sm font-semibold transition-colors", type === 'lost' ? "bg-[#f59e0b] text-[#0a0f1f] shadow-sm" : "text-slate-300 hover:bg-white/10")}>Lost Item</button>
+          <button onClick={() => setType('found')} className={cn("rounded-md py-2.5 text-sm font-semibold transition-colors", type === 'found' ? "bg-[#10b981] text-[#0a1f1a] shadow-sm" : "text-slate-300 hover:bg-white/10")}>Found Item</button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -1176,8 +1378,8 @@ const PostItemPage = () => {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-300">Facebook Link</label>
-            <input type="url" value={form.facebook_url} onChange={(e) => setForm({...form, facebook_url: e.target.value})} className="form-field" placeholder="https://facebook.com/username" />
+            <label className="mb-1 block text-sm font-medium text-slate-300">Facebook Name</label>
+            <input type="text" value={form.facebook_url} onChange={(e) => setForm({...form, facebook_url: e.target.value})} className="form-field" placeholder="Your Facebook name" />
           </div>
 
           <div>
@@ -1209,7 +1411,7 @@ const PostItemPage = () => {
                 </div>
               </div>
               <div className="flex items-start gap-3 rounded-lg border border-white/10 bg-white/10 p-3">
-                <input type="checkbox" id="turnover" checked={form.turnover_to_barangay} onChange={(e) => setForm({...form, turnover_to_barangay: e.target.checked})} className="mt-0.5 h-5 w-5 rounded border-white/20 bg-[#0a1022] text-[#4f8cff] focus:ring-[#4f8cff]" />
+                <input type="checkbox" id="turnover" checked={form.turnover_to_barangay} onChange={(e) => setForm({...form, turnover_to_barangay: e.target.checked})} className="mt-0.5 h-5 w-5 rounded border-white/20 bg-[#0d1428] text-[#3b82f6] focus:ring-[#3b82f6]" />
                 <label htmlFor="turnover" className="text-slate-300">I will turn over the item to the barangay office</label>
               </div>
             </>
@@ -1217,18 +1419,18 @@ const PostItemPage = () => {
 
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-300">Item Photo</label>
-            <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-white/20 bg-[#0a1022]/90 px-4 py-6 text-center transition hover:border-[#4f8cff]/70 hover:bg-[#0d1730]">
-              <ImagePlus className="mb-3 h-8 w-8 text-[#82b9ff]" />
+            <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-white/20 bg-[#0d1428]/90 px-4 py-6 text-center transition hover:border-[#3b82f6]/70 hover:bg-[#0d1730]">
+              <ImagePlus className="mb-3 h-8 w-8 text-[#93c5fd]" />
               <span className="text-sm font-semibold text-white">Upload a photo</span>
               <span className="mt-1 text-xs text-slate-400">JPG, PNG, or WebP up to 5MB</span>
               <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageChange} className="sr-only" />
             </label>
             {imagePreview && (
-              <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-[#070b1a]">
+              <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-[#0b1224]">
                 <img src={imagePreview} alt="Selected item preview" className="h-56 w-full object-cover" />
                 <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs text-slate-300">
                   <span className="min-w-0 truncate">{selectedImage?.name}</span>
-                  <button type="button" onClick={() => setSelectedImage(null)} className="rounded-md px-2 py-1 font-semibold text-[#ffa2ae] transition hover:bg-[#ff5c74]/10">
+                  <button type="button" onClick={() => setSelectedImage(null)} className="rounded-md px-2 py-1 font-semibold text-[#fca5a5] transition hover:bg-[#ef4444]/10">
                     Remove
                   </button>
                 </div>
@@ -1345,14 +1547,14 @@ const ClaimSubmitPage = () => {
 
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-300">Proof Photo *</label>
-            <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-white/20 bg-[#0a1022]/90 px-4 py-6 text-center transition hover:border-[#4f8cff]/70">
-              <ImagePlus className="mb-3 h-8 w-8 text-[#82b9ff]" />
+            <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-white/20 bg-[#0d1428]/90 px-4 py-6 text-center transition hover:border-[#3b82f6]/70">
+              <ImagePlus className="mb-3 h-8 w-8 text-[#93c5fd]" />
               <span className="text-sm font-semibold text-white">Upload proof</span>
               <span className="mt-1 text-xs text-slate-400">Receipt, item photo, or identifying mark</span>
               <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleProofChange} className="sr-only" required />
             </label>
             {proofPreview && (
-              <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-[#070b1a]">
+              <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-[#0b1224]">
                 <img src={proofPreview} alt="Proof preview" className="h-48 w-full object-cover" />
               </div>
             )}
@@ -1407,8 +1609,8 @@ const Dashboard = () => {
       <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="glass-card p-5">
           <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-[#1b8cff]/15 p-3">
-              <Package className="h-6 w-6 text-[#82b9ff]" />
+            <div className="rounded-lg bg-[#2563eb]/15 p-3">
+              <Package className="h-6 w-6 text-[#93c5fd]" />
             </div>
             <div>
               <p className="text-2xl font-bold text-white">{myItems.length}</p>
@@ -1418,8 +1620,8 @@ const Dashboard = () => {
         </div>
         <div className="glass-card p-5">
           <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-[#19d7b7]/15 p-3">
-              <CheckCircle className="h-6 w-6 text-[#75f7df]" />
+            <div className="rounded-lg bg-[#10b981]/15 p-3">
+              <CheckCircle className="h-6 w-6 text-[#6ee7b7]" />
             </div>
             <div>
               <p className="text-2xl font-bold text-white">{myItems.filter((i: any) => i.status === 'posted').length}</p>
@@ -1429,8 +1631,8 @@ const Dashboard = () => {
         </div>
         <div className="glass-card p-5">
           <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-[#ffb84d]/15 p-3">
-              <MessageSquare className="h-6 w-6 text-[#ffd08a]" />
+            <div className="rounded-lg bg-[#f59e0b]/15 p-3">
+              <MessageSquare className="h-6 w-6 text-[#fcd34d]" />
             </div>
             <div>
               <p className="text-2xl font-bold text-white">{myClaims.length}</p>
@@ -1440,8 +1642,8 @@ const Dashboard = () => {
         </div>
         <div className="glass-card p-5">
           <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-[#b84dff]/15 p-3">
-              <ShieldCheck className="h-6 w-6 text-[#d8a7ff]" />
+            <div className="rounded-lg bg-[#7c3aed]/15 p-3">
+              <ShieldCheck className="h-6 w-6 text-[#c4b5fd]" />
             </div>
             <div>
               <p className="text-2xl font-bold text-white">{user?.verified ? 'Verified' : 'Unverified'}</p>
@@ -1476,7 +1678,7 @@ const Dashboard = () => {
 
         <div className="glass-card p-5 sm:p-6 lg:col-span-2">
           <div className="flex items-center gap-2 mb-4">
-            <Star className="h-5 w-5 text-[#b84dff]" />
+            <Star className="h-5 w-5 text-[#7c3aed]" />
             <h2 className="text-lg font-semibold text-white">Suggested Matches</h2>
           </div>
           {matches.length === 0 ? (
@@ -1484,9 +1686,9 @@ const Dashboard = () => {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {matches.map((match: any) => (
-                <div key={match.id} className="flex flex-col justify-between gap-4 rounded-lg border border-[#b84dff]/30 bg-[#b84dff]/5 p-4 transition hover:bg-[#b84dff]/10">
+                <div key={match.id} className="flex flex-col justify-between gap-4 rounded-lg border border-[#7c3aed]/30 bg-[#7c3aed]/5 p-4 transition hover:bg-[#7c3aed]/10">
                   <div className="min-w-0">
-                    <p className="text-xs font-bold uppercase tracking-wider text-[#d8a7ff]">Potential Match ({match.confidence_score}%)</p>
+                    <p className="text-xs font-bold uppercase tracking-wider text-[#c4b5fd]">Potential Match ({match.confidence_score}%)</p>
                     <p className="mt-2 text-sm text-slate-200">
                       Your <span className="font-bold text-white">"{user.id === match.lost_user_id ? match.lost_title : match.found_title}"</span> might match 
                       the <span className="font-bold text-white">"{user.id === match.lost_user_id ? match.found_title : match.lost_title}"</span> reported in the system.
@@ -1555,11 +1757,11 @@ const AdminDashboard = () => {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-8 overflow-hidden rounded-lg border border-white/10 bg-[#070b1a] p-6 text-white shadow-xl shadow-black/30 sm:p-8">
+      <div className="mb-8 overflow-hidden rounded-lg border border-white/10 bg-[#0b1224] p-6 text-white shadow-xl shadow-black/30 sm:p-8">
         <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div>
             <img src={logoUrl} alt="LostLink Brgy Paknaan" className="mb-5 h-auto w-56 object-contain" />
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#82b9ff]">Barangay operations</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#93c5fd]">Barangay operations</p>
             <h1 className="editorial-heading mt-3 text-3xl sm:text-4xl leading-tight">Admin Dashboard</h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-slate-400">Real-time system overview, active report queues, and verified claim activity for Barangay Paknaan.</p>
           </div>
@@ -1595,7 +1797,7 @@ const AdminDashboard = () => {
         {/* Lost vs Found Items Pie Chart */}
         <div className="glass-card p-5 sm:p-6 xl:col-span-1">
           <h2 className="mb-6 text-lg font-semibold text-white flex items-center gap-2">
-            <BarChart3 className="h-5 w-5 text-[#ffb84d]" />
+            <BarChart3 className="h-5 w-5 text-[#f59e0b]" />
             Lost vs Found Items
           </h2>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-10">
@@ -1611,7 +1813,7 @@ const AdminDashboard = () => {
                   <div 
                     className="h-full w-full rounded-full" 
                     style={{ 
-                      background: `conic-gradient(#ffb84d 0% ${lostPercentage}%, #19d7b7 ${lostPercentage}% 100%)` 
+                      background: `conic-gradient(#f59e0b 0% ${lostPercentage}%, #10b981 ${lostPercentage}% 100%)` 
                     }}
                   />
                 );
@@ -1620,14 +1822,14 @@ const AdminDashboard = () => {
             <div className="space-y-3 w-full sm:w-auto">
               <div className="flex items-center justify-between sm:justify-start gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="h-3 w-3 shrink-0 rounded-full bg-[#ffb84d]" />
+                  <span className="h-3 w-3 shrink-0 rounded-full bg-[#f59e0b]" />
                   <span className="text-sm text-slate-300">Lost Items</span>
                 </div>
                 <span className="font-mono text-sm font-bold text-white">({data?.typeStats?.find((s: any) => s.type === 'lost')?.count || 0})</span>
               </div>
               <div className="flex items-center justify-between sm:justify-start gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="h-3 w-3 shrink-0 rounded-full bg-[#19d7b7]" />
+                  <span className="h-3 w-3 shrink-0 rounded-full bg-[#10b981]" />
                   <span className="text-sm text-slate-300">Found Items</span>
                 </div>
                 <span className="font-mono text-sm font-bold text-white">({data?.typeStats?.find((s: any) => s.type === 'found')?.count || 0})</span>
@@ -1639,7 +1841,7 @@ const AdminDashboard = () => {
         {/* Top Categories Bar Graph */}
         <div className="glass-card p-5 sm:p-6 xl:col-span-1">
           <h2 className="mb-6 text-lg font-semibold text-white flex items-center gap-2">
-            <BarChart3 className="h-5 w-5 text-[#82b9ff]" />
+            <BarChart3 className="h-5 w-5 text-[#93c5fd]" />
             Top Categories
           </h2>
           <div className="space-y-5">
@@ -1657,7 +1859,7 @@ const AdminDashboard = () => {
                       initial={{ width: 0 }}
                       animate={{ width: `${percentage}%` }}
                       transition={{ duration: 1, delay: i * 0.1 }}
-                      className="h-full rounded-full bg-gradient-to-r from-[#1b8cff] to-[#82b9ff]" 
+                      className="h-full rounded-full bg-gradient-to-r from-[#2563eb] to-[#93c5fd]" 
                     />
                   </div>
                 </div>
@@ -1681,7 +1883,7 @@ const AdminDashboard = () => {
                   </div>
                   <div className="h-1.5 w-full rounded-full bg-white/5">
                     <div 
-                      className="h-full rounded-full bg-[#19d7b7]" 
+                      className="h-full rounded-full bg-[#10b981]" 
                       style={{ width: `${percentage}%` }} 
                     />
                   </div>
@@ -1694,7 +1896,7 @@ const AdminDashboard = () => {
         {/* Activity Trend Chart */}
         <div className="glass-card p-5 sm:p-6 lg:col-span-2 xl:col-span-3">
           <h2 className="mb-6 text-lg font-semibold text-white flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-[#82b9ff]" />
+            <TrendingUp className="h-5 w-5 text-[#93c5fd]" />
             Weekly Report Volume
           </h2>
           <div className="flex h-48 items-end justify-between gap-2 px-2 pb-8 pt-4 overflow-x-auto">
@@ -1704,10 +1906,10 @@ const AdminDashboard = () => {
               return (
                 <div key={i} className="group relative flex flex-1 flex-col items-center min-w-[40px]">
                   <div 
-                    className="w-full max-w-[40px] rounded-t-md bg-gradient-to-t from-[#1b8cff]/40 to-[#1b8cff] transition-all group-hover:to-[#9dc4ff]" 
+                    className="w-full max-w-[40px] rounded-t-md bg-gradient-to-t from-[#2563eb]/40 to-[#2563eb] transition-all group-hover:to-[#bfdbfe]" 
                     style={{ height: `${height}%` }}
                   >
-                    <div className="absolute -top-8 left-1/2 -translate-x-1/2 rounded bg-white px-2 py-1 text-[10px] font-bold text-[#050816] opacity-0 group-hover:opacity-100">
+                    <div className="absolute -top-8 left-1/2 -translate-x-1/2 rounded bg-white px-2 py-1 text-[10px] font-bold text-[#0a0f1f] opacity-0 group-hover:opacity-100">
                       {day.count}
                     </div>
                   </div>
@@ -1758,7 +1960,7 @@ const AdminReportsPage = () => {
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[#82b9ff]">Admin</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-[#93c5fd]">Admin</p>
           <h1 className="text-3xl font-bold text-white">Manage Reports</h1>
           <p className="mt-1 text-slate-400">Approve, reject, archive, and review lost/found submissions.</p>
         </div>
@@ -1781,7 +1983,7 @@ const AdminReportsPage = () => {
         <div className="space-y-4">
           {items.map((item) => (
             <div key={item.id} className="glass-card grid gap-4 p-4 lg:grid-cols-[120px_minmax(0,1fr)_auto] lg:items-center">
-              <div className="flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg bg-[#070b1a]">
+              <div className="flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg bg-[#0b1224]">
                 <ItemImage
                   item={item}
                   className="h-full w-full object-cover"
@@ -1791,7 +1993,7 @@ const AdminReportsPage = () => {
               </div>
               <div className="min-w-0">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <span className={cn("rounded-full border px-2.5 py-1 text-xs font-bold uppercase", item.type === 'lost' ? 'border-[#ffb84d]/30 bg-[#ffb84d]/15 text-[#ffd08a]' : 'border-[#19d7b7]/30 bg-[#19d7b7]/15 text-[#75f7df]')}>{item.type}</span>
+                  <span className={cn("rounded-full border px-2.5 py-1 text-xs font-bold uppercase", item.type === 'lost' ? 'border-[#f59e0b]/30 bg-[#f59e0b]/15 text-[#fcd34d]' : 'border-[#10b981]/30 bg-[#10b981]/15 text-[#6ee7b7]')}>{item.type}</span>
                   <StatusBadge status={item.status} />
                 </div>
                 <h2 className="break-words text-lg font-bold text-white">{item.title}</h2>
@@ -1801,7 +2003,7 @@ const AdminReportsPage = () => {
               <div className="flex flex-wrap gap-2 lg:justify-end">
                 <Link to={`/items/${item.id}`} className="btn-secondary px-3 py-2"><Eye className="h-4 w-4" />View</Link>
                 {item.status === 'pending' && <button onClick={() => updateStatus(item, 'posted')} className="btn-primary px-3 py-2"><CheckCircle className="h-4 w-4" />Approve</button>}
-                {item.status === 'pending' && <button onClick={() => updateStatus(item, 'rejected')} className="btn-secondary px-3 py-2 text-[#ffa2ae]"><XCircle className="h-4 w-4" />Reject</button>}
+                {item.status === 'pending' && <button onClick={() => updateStatus(item, 'rejected')} className="btn-secondary px-3 py-2 text-[#fca5a5]"><XCircle className="h-4 w-4" />Reject</button>}
                 {item.status !== 'archived' && <button onClick={() => updateStatus(item, 'archived')} className="btn-secondary px-3 py-2">Archive</button>}
               </div>
             </div>
@@ -1845,7 +2047,7 @@ const ClaimReviewPage = () => {
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <div className="mb-6">
-        <p className="text-xs font-bold uppercase tracking-wider text-[#82b9ff]">Official workflow</p>
+        <p className="text-xs font-bold uppercase tracking-wider text-[#93c5fd]">Official workflow</p>
         <h1 className="text-3xl font-bold text-white">Manage Claims</h1>
         <p className="mt-1 text-slate-400">Review proof, approve valid claims, and generate QR slips.</p>
       </div>
@@ -1866,14 +2068,14 @@ const ClaimReviewPage = () => {
                 <p className="mt-1 text-sm text-slate-400">Claimant: {claim.claimant_name || 'Unknown'}</p>
                 <p className="mt-1 line-clamp-2 text-sm text-slate-500">{claim.message}</p>
                 {claim.proof_url && (
-                  <button type="button" onClick={() => setProofClaim(claim)} className="mt-2 inline-flex text-sm font-semibold text-[#9dc4ff]">
+                  <button type="button" onClick={() => setProofClaim(claim)} className="mt-2 inline-flex text-sm font-semibold text-[#bfdbfe]">
                     View proof
                   </button>
                 )}
               </div>
               <div className="flex flex-wrap gap-2 lg:justify-end">
                 {(claim.status === 'pending' || claim.status === 'under_review') && <button onClick={() => decideClaim(claim, 'approve')} className="btn-primary px-3 py-2">Approve</button>}
-                {(claim.status === 'pending' || claim.status === 'under_review') && <button onClick={() => decideClaim(claim, 'reject')} className="btn-secondary px-3 py-2 text-[#ffa2ae]">Reject</button>}
+                {(claim.status === 'pending' || claim.status === 'under_review') && <button onClick={() => decideClaim(claim, 'reject')} className="btn-secondary px-3 py-2 text-[#fca5a5]">Reject</button>}
                 {claim.status === 'approved' && <Link to={`/claims/${claim.id}/qr`} className="btn-secondary px-3 py-2"><QrCode className="h-4 w-4" />QR</Link>}
               </div>
             </div>
@@ -1892,7 +2094,7 @@ const ClaimReviewPage = () => {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="max-h-[70vh] overflow-auto bg-[#050816] p-4">
+            <div className="max-h-[70vh] overflow-auto bg-[#0a0f1f] p-4">
               <ProofPreview url={proofClaim.proof_url} alt={`Proof for ${proofClaim.item_title}`} className="mx-auto max-h-[66vh] w-auto max-w-full object-contain" />
             </div>
             <div className="flex flex-wrap justify-end gap-2 border-t border-white/10 p-4">
@@ -1940,7 +2142,7 @@ const UsersPage = () => {
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <div className="mb-6">
-        <p className="text-xs font-bold uppercase tracking-wider text-[#82b9ff]">Admin</p>
+        <p className="text-xs font-bold uppercase tracking-wider text-[#93c5fd]">Admin</p>
         <h1 className="text-3xl font-bold text-white">Manage Users</h1>
       </div>
       {loading ? <div className="glass-card h-72 animate-pulse" /> : (
@@ -2006,7 +2208,7 @@ const NotificationsPage = () => {
       ) : (
         <div className="space-y-3">
           {notifications.map((notification) => (
-            <div key={notification.id} className={cn("rounded-lg border p-4", notification.is_read ? "border-white/10 bg-white/5" : "border-[#4f8cff]/30 bg-[#4f8cff]/10")}>
+            <div key={notification.id} className={cn("rounded-lg border p-4", notification.is_read ? "border-white/10 bg-white/5" : "border-[#3b82f6]/30 bg-[#3b82f6]/10")}>
               <p className="font-bold text-white">{notification.title}</p>
               <p className="mt-1 text-sm text-slate-400">{notification.message}</p>
               <p className="mt-2 text-xs text-slate-500">{new Date(notification.created_at).toLocaleString()}</p>
@@ -2045,7 +2247,7 @@ const ReportsPage = () => {
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[#82b9ff]">Reports</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-[#93c5fd]">Reports</p>
           <h1 className="text-3xl font-bold text-white">Monthly Summary</h1>
         </div>
         <div className="flex gap-2">
@@ -2100,7 +2302,7 @@ const AdminDatabasePage = () => {
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-8">
         <div className="flex items-center gap-3">
-          <Database className="h-8 w-8 text-[#82b9ff]" />
+          <Database className="h-8 w-8 text-[#93c5fd]" />
           <h1 className="text-3xl font-bold text-white">System Database</h1>
         </div>
         <p className="mt-1 text-slate-400">Master record management and activity history for Barangay Paknaan.</p>
@@ -2114,7 +2316,7 @@ const AdminDatabasePage = () => {
             { id: 'claims', label: 'Claims', icon: MessageSquare },
             { id: 'logs', label: 'Activity Logs', icon: History },
           ].map(t => (
-            <button key={t.id} onClick={() => { setTab(t.id); setSearch(''); }} className={cn("flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition-all", tab === t.id ? "bg-[#4f8cff] text-white" : "text-slate-300 hover:bg-white/10")}>
+            <button key={t.id} onClick={() => { setTab(t.id); setSearch(''); }} className={cn("flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition-all", tab === t.id ? "bg-[#3b82f6] text-white" : "text-slate-300 hover:bg-white/10")}>
               <t.icon className="h-4 w-4" />
               {t.label}
             </button>
@@ -2248,7 +2450,7 @@ const ClaimQRPage = () => {
   return (
     <div className="mx-auto max-w-md px-4 py-8">
       <div className="glass-card p-5 text-center sm:p-8">
-        <QrCode className="mx-auto mb-4 h-16 w-16 text-[#82b9ff]" />
+        <QrCode className="mx-auto mb-4 h-16 w-16 text-[#93c5fd]" />
         <h1 className="mb-2 text-2xl font-bold text-white">Claim Verification</h1>
         <p className="mb-6 text-slate-400">Show this QR code at the barangay office</p>
         
@@ -2395,7 +2597,7 @@ const ImageMatchPage = () => {
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-[#82b9ff]">Image Match</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-[#93c5fd]">Image Match</p>
           <h1 className="text-3xl font-bold text-white">Camera Item Matching</h1>
           <p className="mt-1 text-slate-400">Capture or upload an item photo and compare it with existing Lost and Found reports.</p>
         </div>
@@ -2415,10 +2617,10 @@ const ImageMatchPage = () => {
       {(statusMessage || errorMessage) && (
         <div className={cn(
           "mb-6 rounded-lg border px-4 py-3 text-sm",
-          errorMessage ? "border-[#ff5c74]/30 bg-[#ff5c74]/15 text-[#ffb3bd]" : "border-[#4f8cff]/30 bg-[#4f8cff]/15 text-[#cfe2ff]"
+          errorMessage ? "border-[#ef4444]/30 bg-[#ef4444]/15 text-[#fecaca]" : "border-[#3b82f6]/30 bg-[#3b82f6]/15 text-[#cfe2ff]"
         )}>
           <div className="flex items-center gap-3">
-            {loading && <div className="h-4 w-4 animate-spin rounded-full border-2 border-[#9dc4ff] border-t-transparent" />}
+            {loading && <div className="h-4 w-4 animate-spin rounded-full border-2 border-[#bfdbfe] border-t-transparent" />}
             <span>{errorMessage || statusMessage}</span>
           </div>
         </div>
@@ -2426,15 +2628,15 @@ const ImageMatchPage = () => {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
         <div className="glass-card overflow-hidden">
-          <div className="relative flex aspect-[4/3] items-center justify-center bg-[#070b1a]">
+          <div className="relative flex aspect-[4/3] items-center justify-center bg-[#0b1224]">
             {previewUrl ? (
               <img src={previewUrl} alt="Captured item" className="h-full w-full object-cover" />
             ) : (
               <video ref={videoRef} playsInline muted className={cn("h-full w-full object-cover", !cameraActive && "hidden")} />
             )}
             {loading && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#050816]/75 text-white backdrop-blur-sm">
-                <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#9dc4ff] border-t-transparent" />
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#0a0f1f]/75 text-white backdrop-blur-sm">
+                <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#bfdbfe] border-t-transparent" />
                 <span className="text-sm font-semibold">Finding matches...</span>
               </div>
             )}
@@ -2458,12 +2660,12 @@ const ImageMatchPage = () => {
           <h2 className="text-xl font-bold text-white">Search Guide</h2>
           <p className="mt-2 text-sm leading-6 text-slate-400">The system uses AI visual analysis to compare your photo against all reported Lost and Found items.</p>
           <div className="mt-4 grid gap-3">
-            <div className="rounded-lg border border-[#ffb84d]/25 bg-[#ffb84d]/10 p-4">
-              <div className="text-sm font-bold text-[#ffd08a]">Lost reports</div>
+            <div className="rounded-lg border border-[#f59e0b]/25 bg-[#f59e0b]/10 p-4">
+              <div className="text-sm font-bold text-[#fcd34d]">Lost reports</div>
               <p className="mt-1 text-sm text-slate-300">Matches can point to resident reports for missing items.</p>
             </div>
-            <div className="rounded-lg border border-[#19d7b7]/25 bg-[#19d7b7]/10 p-4">
-              <div className="text-sm font-bold text-[#75f7df]">Found reports</div>
+            <div className="rounded-lg border border-[#10b981]/25 bg-[#10b981]/10 p-4">
+              <div className="text-sm font-bold text-[#6ee7b7]">Found reports</div>
               <p className="mt-1 text-sm text-slate-300">Matches can also point to stored or posted found items.</p>
             </div>
           </div>
@@ -2497,17 +2699,17 @@ const ImageMatchPage = () => {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {matches.map((item) => (
-              <Link key={item.id} to={`/items/${item.id}`} className="glass-card overflow-hidden transition hover:shadow-xl hover:shadow-[#1b8cff]/15">
-                <div className="aspect-[4/3] bg-[#070b1a]">
+              <Link key={item.id} to={`/items/${item.id}`} className="glass-card overflow-hidden transition hover:shadow-xl hover:shadow-[#2563eb]/15">
+                <div className="aspect-[4/3] bg-[#0b1224]">
                   <ItemImage item={item} className="h-full w-full object-cover" fallbackClassName="flex h-full w-full items-center justify-center text-slate-500" iconClassName="h-10 w-10" />
                 </div>
                 <div className="space-y-2 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h3 className="min-w-0 truncate font-semibold text-white">{item.title}</h3>
-                      <span className={cn("mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-bold uppercase", item.type === 'lost' ? "border-[#ffb84d]/30 bg-[#ffb84d]/15 text-[#ffd08a]" : "border-[#19d7b7]/30 bg-[#19d7b7]/15 text-[#75f7df]")}>{item.type}</span>
+                      <span className={cn("mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-bold uppercase", item.type === 'lost' ? "border-[#f59e0b]/30 bg-[#f59e0b]/15 text-[#fcd34d]" : "border-[#10b981]/30 bg-[#10b981]/15 text-[#6ee7b7]")}>{item.type}</span>
                     </div>
-                    <span className="shrink-0 rounded-full border border-[#4f8cff]/30 bg-[#4f8cff]/15 px-2 py-1 text-xs font-bold text-[#9dc4ff]">
+                    <span className="shrink-0 rounded-full border border-[#3b82f6]/30 bg-[#3b82f6]/15 px-2 py-1 text-xs font-bold text-[#bfdbfe]">
                       {formatMatchScore(item.similarity_score)}
                     </span>
                   </div>
@@ -2529,16 +2731,21 @@ const ImageMatchPage = () => {
 export default function App() {
   const { user, logout } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const location = useLocation();
+  // The landing page uses its own top horizontal nav header instead of the sidebar.
+  const isLanding = location.pathname === '/';
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[#050816]">
-      <Sidebar
-        user={user}
-        onLogout={logout}
-        collapsed={sidebarCollapsed}
-        onCollapsedChange={setSidebarCollapsed}
-      />
-      <main className={cn("min-w-0 transition-[padding] duration-300", sidebarCollapsed ? "md:pl-20" : "md:pl-64")}>
+    <div className="min-h-screen overflow-x-hidden bg-[#0a0f1f]">
+      {!isLanding && (
+        <Sidebar
+          user={user}
+          onLogout={logout}
+          collapsed={sidebarCollapsed}
+          onCollapsedChange={setSidebarCollapsed}
+        />
+      )}
+      <main className={cn("min-w-0 transition-[padding] duration-300", !isLanding && (sidebarCollapsed ? "md:pl-20" : "md:pl-64"))}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
