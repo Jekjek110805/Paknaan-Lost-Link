@@ -611,8 +611,8 @@ const LandingHeader = () => {
     { name: 'Home', path: '/' },
     { name: 'Lost Items', path: '/items/lost' },
     { name: 'Found Items', path: '/items/found' },
-    { name: 'Report Item', path: '/post' },
-    { name: 'Image Match', path: '/image-match' },
+    { name: 'Report Item', path: user ? '/post' : '/login?from=post' },
+    { name: 'Image Match', path: user ? '/image-match' : '/login?from=image-match' },
   ];
 
   return (
@@ -781,7 +781,7 @@ const Home = () => {
               </div>
 
               <div className="mx-auto mt-5 flex max-w-2xl flex-col gap-3 sm:flex-row sm:justify-center">
-                <button onClick={() => navigate('/post')} className="btn-primary px-6 py-3">
+                <button onClick={() => navigate(user ? '/post' : '/login?from=post')} className="btn-primary px-6 py-3">
                   <PlusCircle className="h-5 w-5" />
                   Report an Item
                 </button>
