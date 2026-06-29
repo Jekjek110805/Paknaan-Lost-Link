@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { QRCodeSVG } from 'qrcode.react';
+import Strands from './components/Strands/Strands';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -957,13 +958,28 @@ const Login = () => {
 
   return (
     <div className="relative flex min-h-[calc(100vh-4rem)] items-center justify-center overflow-hidden px-4 py-8">
+      <div className="absolute inset-0 bg-[#050816]" aria-hidden="true" />
       <div
-        className="absolute inset-0 bg-cover bg-center opacity-45 saturate-90"
+        className="absolute inset-0 bg-cover bg-center opacity-20 saturate-90"
         style={{ backgroundImage: `url("${brgyLoginBgUrl}")` }}
         aria-hidden="true"
       />
-      <div className="absolute inset-0 bg-[#0a0f1f]/58" aria-hidden="true" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(79,140,255,0.10),transparent_46%),linear-gradient(180deg,rgba(5,8,22,0.22),#0a0f1f_98%)]" aria-hidden="true" />
+      <div className="absolute inset-0 bg-[#0a0f1f]/35" aria-hidden="true" />
+      <div className="absolute inset-0 opacity-95" aria-hidden="true">
+        <Strands
+          colors={['#7b86f9', '#374c47']}
+          waviness={3}
+          intensity={0.5}
+          scale={3}
+          speed={0.4}
+          glow={1.05}
+          saturation={1.65}
+          hueShift={0.56}
+          count={3}
+          opacity={0.95}
+        />
+      </div>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(123,134,249,0.12),transparent_52%),linear-gradient(180deg,rgba(5,8,22,0.18),#0a0f1f_98%)]" aria-hidden="true" />
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card relative z-10 w-full max-w-md p-6 sm:p-8">
         <div className="text-center mb-8">
