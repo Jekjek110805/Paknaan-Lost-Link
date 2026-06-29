@@ -67,9 +67,7 @@
   }
 
   .landing-hero-gradient {
-    background:
-      linear-gradient(180deg, rgba(10, 15, 31, 0.38) 0%, rgba(10, 15, 31, 0.7) 72%, #0a0f1f 100%),
-      linear-gradient(135deg, rgba(37, 99, 235, 0.78) 0%, rgba(79, 70, 229, 0.84) 48%, rgba(124, 58, 237, 0.82) 100%);
+    background: linear-gradient(180deg, rgba(10, 15, 31, 0.7) 0%, rgba(10, 15, 31, 0.85) 58%, #0a0f1f 100%);
   }
 
   .landing-white-button {
