@@ -745,7 +745,7 @@ const Home = () => {
             style={{ backgroundImage: `url(${jumbotronBgUrl})` }}
             aria-hidden="true"
           />
-          <div className="absolute inset-0 -z-10 bg-gradient-to-b from-[#0a0f1f]/70 via-[#0a0f1f]/85 to-[#0a0f1f]" aria-hidden="true" />
+          <div className="landing-hero-gradient absolute inset-0 -z-10" aria-hidden="true" />
 
           <div className="mx-auto max-w-4xl px-5 py-20 text-center sm:px-8 sm:py-28 lg:py-32">
             <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
@@ -753,10 +753,10 @@ const Home = () => {
                 <ShieldCheck className="h-4 w-4" />
                 Barangay Paknaan Lost &amp; Found
               </span>
-              <h1 className="editorial-heading mx-auto mt-6 max-w-3xl text-4xl leading-[1.04] text-white sm:text-6xl">
+              <h1 className="editorial-heading landing-hero-title mx-auto mt-6 max-w-3xl text-4xl leading-[1.04] sm:text-6xl">
                 A faster way to report, verify, and return belongings.
               </h1>
-              <p className="mx-auto mt-5 max-w-2xl text-sm leading-7 text-slate-300 sm:text-base">
+              <p className="landing-hero-copy mx-auto mt-5 max-w-2xl text-sm leading-7 sm:text-base">
                 LostLink keeps resident reports, found-item postings, barangay review, and claim verification in one focused, official workflow.
               </p>
 
@@ -784,7 +784,7 @@ const Home = () => {
                   <PlusCircle className="h-5 w-5" />
                   Report an Item
                 </button>
-                <button onClick={() => navigate('/items/found')} className="btn-secondary px-6 py-3">
+                <button onClick={() => navigate('/items/found')} className="landing-white-button px-6 py-3">
                   Browse Found Items
                   <ChevronRight className="h-4 w-4" />
                 </button>
@@ -844,6 +844,7 @@ const Home = () => {
         </section>
 
       </main>
+      <LandingFooter />
     </div>
   );
 };
@@ -2726,6 +2727,248 @@ const ImageMatchPage = () => {
   );
 };
 
+// ==================== LEGAL PAGES ====================
+
+const LegalLayout = ({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) => (
+  <div className="bg-transparent">
+    <LandingHeader />
+    <main className="w-full text-slate-100">
+      <section className="border-b border-white/10 bg-[#0d1428]/70 px-5 py-12 sm:px-8 lg:px-12">
+        <div className="mx-auto max-w-3xl">
+          <Link to="/" className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-[#93c5fd] transition hover:text-white">
+            <ArrowLeft className="h-4 w-4" />
+            Back to Home
+          </Link>
+          <h1 className="editorial-heading text-3xl leading-tight text-white sm:text-4xl">{title}</h1>
+          <p className="mt-3 text-sm text-slate-400">{subtitle}</p>
+        </div>
+      </section>
+      <section className="mx-auto max-w-3xl px-5 py-10 sm:px-8 lg:px-12">
+        <div className="space-y-8 text-sm leading-7 text-slate-300">{children}</div>
+      </section>
+    </main>
+  </div>
+);
+
+const LegalSection = ({ heading, children }: { heading: string; children: ReactNode }) => (
+  <div className="space-y-3">
+    <h2 className="text-lg font-bold text-white">{heading}</h2>
+    {children}
+  </div>
+);
+
+const PrivacyPolicyPage = () => (
+  <LegalLayout
+    title="Privacy Policy"
+    subtitle="Last updated: June 29, 2026"
+  >
+    <p>
+      Barangay Paknaan LostLink ("LostLink", "we", "our", or "the System") is a community lost-and-found
+      platform operated for the residents of Barangay Paknaan. This Privacy Policy explains what information
+      we collect, how we use it, and the choices you have. By creating an account or using the System, you
+      agree to the practices described here.
+    </p>
+
+    <LegalSection heading="1. Information We Collect">
+      <p>We collect information you provide directly and information generated as you use the System:</p>
+      <ul className="list-disc space-y-1.5 pl-5">
+        <li><strong className="text-white">Account details</strong> — your name, email address, contact number, zone/purok, and an optional Facebook name or profile photo.</li>
+        <li><strong className="text-white">Report content</strong> — descriptions, categories, locations, dates, and photos of lost or found items you submit.</li>
+        <li><strong className="text-white">Claim information</strong> — proof of ownership, messages, and verification details exchanged when claiming an item.</li>
+        <li><strong className="text-white">Technical data</strong> — basic log information such as the actions you take in the System needed to keep it secure and working.</li>
+      </ul>
+    </LegalSection>
+
+    <LegalSection heading="2. How We Use Your Information">
+      <ul className="list-disc space-y-1.5 pl-5">
+        <li>To publish lost and found reports and match items with their owners.</li>
+        <li>To let barangay staff review, verify, and approve reports and claims.</li>
+        <li>To contact you about your reports, claims, and notifications.</li>
+        <li>To operate, secure, and improve the System.</li>
+      </ul>
+    </LegalSection>
+
+    <LegalSection heading="3. Information Visible to Others">
+      <p>
+        When you post a report, the item details and photos you submit may be visible to other residents and
+        barangay staff so the item can be identified and returned. Avoid including sensitive personal
+        information in item descriptions. Your contact details are shared only as needed to coordinate a
+        verified return.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="4. Image Matching & Third-Party Services">
+      <p>
+        To help match lost and found items, photos you upload may be processed by AI matching services
+        (such as Google Gemini) and stored through image hosting providers (such as Cloudinary). These
+        providers process data only to deliver their service. If you sign in with Google, your sign-in is
+        handled by Google under their own privacy policy.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="5. Data Retention">
+      <p>
+        We keep your information for as long as your account is active or as needed to operate the
+        lost-and-found service and meet barangay record-keeping needs. You may request that your account and
+        associated data be removed, subject to records we are required to keep.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="6. Security">
+      <p>
+        We use reasonable safeguards, including password hashing and access controls, to protect your
+        information. However, no online system can be guaranteed to be completely secure, so please use a
+        strong password and keep your login credentials private.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="7. Your Choices">
+      <ul className="list-disc space-y-1.5 pl-5">
+        <li>You can review and update your profile details at any time.</li>
+        <li>You can request access to, correction of, or deletion of your personal data.</li>
+        <li>You can ask the barangay to remove a report you submitted.</li>
+      </ul>
+    </LegalSection>
+
+    <LegalSection heading="8. Children's Privacy">
+      <p>
+        The System is intended for residents who are able to manage a lost-and-found report. Minors should
+        use the System with the guidance of a parent or guardian.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="9. Changes to This Policy">
+      <p>
+        We may update this Privacy Policy from time to time. Significant changes will be reflected by the
+        "Last updated" date above. Continued use of the System after changes means you accept the updated
+        policy.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="10. Contact Us">
+      <p>
+        For questions about this Privacy Policy or your data, please contact the Barangay Paknaan office or
+        reach out through the official barangay channels.
+      </p>
+    </LegalSection>
+  </LegalLayout>
+);
+
+const TermsOfServicePage = () => (
+  <LegalLayout
+    title="Terms of Service"
+    subtitle="Last updated: June 29, 2026"
+  >
+    <p>
+      These Terms of Service ("Terms") govern your use of Barangay Paknaan LostLink (the "System"). By
+      creating an account or using the System, you agree to these Terms. If you do not agree, please do not
+      use the System.
+    </p>
+
+    <LegalSection heading="1. Purpose of the Service">
+      <p>
+        LostLink is a community tool to help residents of Barangay Paknaan report lost items, post found
+        items, and coordinate verified returns with the help of barangay staff. The System is provided for
+        this lawful, community purpose only.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="2. Accounts">
+      <ul className="list-disc space-y-1.5 pl-5">
+        <li>You must provide accurate, current information when registering.</li>
+        <li>You are responsible for keeping your password secure and for activity under your account.</li>
+        <li>You must notify the barangay if you believe your account has been used without permission.</li>
+      </ul>
+    </LegalSection>
+
+    <LegalSection heading="3. Acceptable Use">
+      <p>You agree not to:</p>
+      <ul className="list-disc space-y-1.5 pl-5">
+        <li>Post false, misleading, or fraudulent reports or claims.</li>
+        <li>Attempt to claim items that do not belong to you.</li>
+        <li>Upload unlawful, offensive, or infringing content.</li>
+        <li>Harass other users or misuse contact information obtained through the System.</li>
+        <li>Disrupt, attack, or attempt to gain unauthorized access to the System.</li>
+      </ul>
+    </LegalSection>
+
+    <LegalSection heading="4. Reports, Claims & Verification">
+      <p>
+        Barangay staff may review, approve, reject, edit, or remove reports and claims to keep the System
+        accurate and fair. Returning an item may require proof of ownership and QR-based verification.
+        LostLink helps coordinate returns but does not guarantee that any lost item will be recovered.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="5. Your Content">
+      <p>
+        You retain ownership of the content you submit. By posting, you grant the barangay permission to
+        display and use that content within the System for the purpose of operating the lost-and-found
+        service. You are responsible for ensuring you have the right to share what you post.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="6. Privacy">
+      <p>
+        Your use of the System is also governed by our{' '}
+        <Link to="/privacy" className="font-semibold text-[#bfdbfe] underline">Privacy Policy</Link>, which
+        explains how we handle your information.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="7. Disclaimer">
+      <p>
+        The System is provided on an "as is" and "as available" basis without warranties of any kind. We do
+        not guarantee that the System will be uninterrupted, error-free, or that information posted by users
+        is accurate.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="8. Limitation of Liability">
+      <p>
+        To the fullest extent permitted by law, Barangay Paknaan and the System operators are not liable for
+        any loss or damage arising from the use of, or inability to use, the System, including disputes
+        between users over items or claims.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="9. Suspension & Termination">
+      <p>
+        We may suspend or terminate access for users who violate these Terms or misuse the System. You may
+        stop using the System and request account removal at any time.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="10. Changes to These Terms">
+      <p>
+        We may update these Terms from time to time. Changes are effective when posted, as shown by the
+        "Last updated" date above. Continued use of the System means you accept the updated Terms.
+      </p>
+    </LegalSection>
+
+    <LegalSection heading="11. Contact">
+      <p>
+        For questions about these Terms, please contact the Barangay Paknaan office or use the official
+        barangay channels.
+      </p>
+    </LegalSection>
+  </LegalLayout>
+);
+
+const LandingFooter = () => (
+  <footer className="border-t border-white/10 bg-[#0b1224] px-5 py-8 text-slate-400 sm:px-8 lg:px-12">
+    <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 text-sm sm:flex-row">
+      <p className="text-center sm:text-left">
+        &copy; 2026 Barangay Paknaan LostLink. All rights reserved.
+      </p>
+      <nav className="flex items-center gap-5">
+        <Link to="/privacy" className="font-semibold transition hover:text-white">Privacy Policy</Link>
+        <Link to="/terms" className="font-semibold transition hover:text-white">Terms of Service</Link>
+      </nav>
+    </div>
+  </footer>
+);
+
 // ==================== APP ====================
 
 export default function App() {
@@ -2765,6 +3008,8 @@ export default function App() {
           <Route path="/admin/users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />
           <Route path="/admin/database" element={<ProtectedRoute roles={['admin']}><AdminDatabasePage /></ProtectedRoute>} />
           <Route path="/reports" element={<ProtectedRoute roles={['admin', 'official']}><ReportsPage /></ProtectedRoute>} />
+          <Route path="/privacy" element={<PrivacyPolicyPage />} />
+          <Route path="/terms" element={<TermsOfServicePage />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
         </Routes>
       </main>
