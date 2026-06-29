@@ -60,6 +60,45 @@
     font-weight: 800;
     letter-spacing: 0;
   }
+
+  .landing-hero-title,
+  .landing-hero-copy {
+    color: #ffffff !important;
+  }
+
+  .landing-hero-gradient {
+    background:
+      linear-gradient(180deg, rgba(10, 15, 31, 0.38) 0%, rgba(10, 15, 31, 0.7) 72%, #0a0f1f 100%),
+      linear-gradient(135deg, rgba(37, 99, 235, 0.78) 0%, rgba(79, 70, 229, 0.84) 48%, rgba(124, 58, 237, 0.82) 100%);
+  }
+
+  .landing-white-button {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.5rem !important;
+    min-height: 3rem !important;
+    border-radius: 0.5rem !important;
+    border: 1px solid #ffffff !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 0.875rem !important;
+    font-weight: 800 !important;
+    line-height: 1.25rem !important;
+    box-shadow: 0 14px 34px rgba(255, 255, 255, 0.18) !important;
+    transition: background-color 150ms ease, transform 150ms ease, box-shadow 150ms ease !important;
+  }
+
+  .landing-white-button:hover {
+    background: #eef2ff !important;
+    transform: translateY(-1px);
+    box-shadow: 0 16px 38px rgba(255, 255, 255, 0.24) !important;
+  }
+
+  .landing-white-button svg {
+    color: #0f172a !important;
+    stroke: currentColor !important;
+  }
 }
 
 /* ============================================================================

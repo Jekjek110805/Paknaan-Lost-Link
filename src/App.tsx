@@ -784,7 +784,11 @@ const Home = () => {
                   <PlusCircle className="h-5 w-5" />
                   Report an Item
                 </button>
-                <button onClick={() => navigate('/items/found')} className="landing-white-button px-6 py-3">
+                <button
+                  type="button"
+                  onClick={() => navigate('/items/found')}
+                  className="landing-white-button px-6 py-3"
+                >
                   Browse Found Items
                   <ChevronRight className="h-4 w-4" />
                 </button>
