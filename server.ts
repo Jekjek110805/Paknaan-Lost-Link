@@ -9,6 +9,7 @@ import multer from 'multer';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 dotenv.config({ path: '.env.local', quiet: true });
 dotenv.config({ quiet: true });
@@ -49,6 +50,8 @@ const DEMO_OFFICIAL_PASSWORD = process.env.DEMO_OFFICIAL_PASSWORD || DEFAULT_DEM
 // Google Sign-In (Google Identity Services). The client ID is public; no client secret needed
 // because we verify the ID token Google issues to the browser server-side.
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '577770716829-k94lqo6lhhh18ssts0ej1lhu9glt5qu8.apps.googleusercontent.com';
+// Google JWKS for ID token verification (cached automatically by jose)
+const GOOGLE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
 
 let pool: any = null;
 let db: any = null;
@@ -833,28 +836,27 @@ async function startServer() {
 
   // Google Sign-In: the browser sends the Google ID token (credential) from
   // Google Identity Services. We verify it with Google, then find-or-create the user.
+  // Google ID token verification using JWKS (no deprecated tokeninfo endpoint).
+  // Cache Google's public keys to avoid fetching on every login.
+
   app.post('/api/auth/google', async (req, res) => {
     const { credential } = req.body || {};
     if (!credential) return res.status(400).json({ error: 'Missing Google credential' });
 
     try {
-      // Verify the ID token against Google (validates signature, expiry, issuer).
-      const verifyRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
-      const payload: any = await verifyRes.json();
+      // Verify the JWT signature, expiry, and issuer using Google's public keys.
+      const { payload } = await jwtVerify(credential, GOOGLE_JWKS, {
+        issuer: ['https://accounts.google.com', 'accounts.google.com'],
+        audience: GOOGLE_CLIENT_ID,
+      });
 
-      if (!verifyRes.ok || payload.error) {
-        return res.status(401).json({ error: 'Invalid Google token' });
-      }
-      if (payload.aud !== GOOGLE_CLIENT_ID) {
-        return res.status(401).json({ error: 'Google token was issued for a different app' });
-      }
-      if (String(payload.email_verified) !== 'true' || !payload.email) {
+      if (!payload.email || payload.email_verified !== true) {
         return res.status(401).json({ error: 'Google account email is not verified' });
       }
 
       const email = String(payload.email).trim().toLowerCase();
-      const name = payload.name || payload.given_name || email.split('@')[0];
-      const photo = payload.picture || null;
+      const name = (payload as any).name || (payload as any).given_name || email.split('@')[0];
+      const photo = (payload as any).picture || null;
 
       let user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
       if (!user) {
@@ -864,7 +866,6 @@ async function startServer() {
         );
         user = await db.get('SELECT * FROM users WHERE id = ?', [result.lastID]);
       } else if (!user.photo_url && photo) {
-        // Backfill the avatar for an existing account on first Google sign-in.
         await db.run('UPDATE users SET photo_url = ?, email_verified = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [photo, true, user.id]);
         user.photo_url = photo;
       }
@@ -874,7 +875,7 @@ async function startServer() {
       res.json({ token, user: getPublicUser(user) });
     } catch (e: any) {
       console.error('Google sign-in failed:', e?.message || e);
-      res.status(500).json({ error: 'Google sign-in failed' });
+      res.status(401).json({ error: 'Google sign-in failed: invalid or expired token' });
     }
   });
 
