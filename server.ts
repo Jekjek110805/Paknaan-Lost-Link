@@ -18,18 +18,9 @@ const __dirname = path.dirname(__filename);
 const IS_VERCEL = process.env.VERCEL === '1';
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'paknaan-secret-key-change-in-production';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
-const OPENAI_EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
-const GEMINI_VISION_MODEL = process.env.GEMINI_VISION_MODEL || 'gemini-2.5-flash';
-const GEMINI_EMBEDDING_MODEL = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
-const VERTEX_AI_PROJECT_ID = process.env.VERTEX_AI_PROJECT_ID;
-const VERTEX_AI_LOCATION = process.env.VERTEX_AI_LOCATION || 'us-central1';
-const VERTEX_AI_MODEL = process.env.VERTEX_AI_MODEL || 'multimodalembedding@001';
-const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-const CLIP_SERVICE_URL = process.env.CLIP_SERVICE_URL?.replace(/\/+$/, '');
-const IMAGE_MATCH_RERANK = process.env.IMAGE_MATCH_RERANK === '1';
-const IMAGE_MATCH_TIMEOUT_MS = Number(process.env.IMAGE_MATCH_TIMEOUT_MS || 12000);
+// ─── Hermes Agent for Image Matching ────────────────────────────────────
+const HERMES_CLI = process.env.HERMES_CLI || '/opt/hermes/.venv/bin/hermes';
+const HERMES_MATCH_TIMEOUT_MS = Number(process.env.HERMES_MATCH_TIMEOUT_MS || 60000);
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || process.env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
@@ -45,9 +36,91 @@ const DEMO_OFFICIAL_PASSWORD = process.env.DEMO_OFFICIAL_PASSWORD || DEFAULT_DEM
 
 let pool: any = null;
 let db: any = null;
-let pgVectorReady = false;
-let clipVectorReady = false;
-let googleAccessTokenCache: { token: string; expiresAt: number } | null = null;
+// ─── Hermes Agent Image Matching (replaces all vector/embedding/hash logic) ──
+
+async function matchWithHermes(imagePath: string, candidates: any[]): Promise<any[]> {
+  if (candidates.length === 0) return [];
+
+  const catalog = candidates.map((item: any) => ({
+    id: item.id,
+    type: item.type,
+    title: item.title,
+    description: item.description,
+    category: item.category,
+    location: item.location,
+    purok: item.purok,
+    image_url: item.image_url || null,
+  }));
+
+  const prompt = `You are an AI assistant for Barangay Paknaan's Lost and Found system.
+
+A resident has uploaded a photo of a lost/found item. Analyze the image at ${imagePath} and compare it against the catalog of existing reported items below.
+
+For each item that visually matches or is likely the same physical item, assign a score from 0.0 to 1.0 and a brief reason.
+
+Prioritize: object type match > color > brand/text > shape > material > distinctive marks.
+Penalize different object types heavily (e.g., wallet vs phone should score near 0 even if colors are similar).
+
+Only include items with score >= 0.55.
+
+Catalog of existing items:
+${JSON.stringify(catalog, null, 2)}
+
+Return ONLY a JSON array, no other text:
+[{"id": <number>, "score": <0.0-1.0>, "reason": "<brief explanation>"}]`;
+
+  const { execFile } = await import('child_process');
+  
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      resolve([]);
+    }, HERMES_MATCH_TIMEOUT_MS);
+
+    execFile(
+      HERMES_CLI,
+      ['chat', '-q', prompt, '--toolsets', 'vision'],
+      { timeout: HERMES_MATCH_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        clearTimeout(timeout);
+        if (error) {
+          console.warn('Hermes agent matching failed:', error.message);
+          resolve([]);
+          return;
+        }
+
+        try {
+          // Extract JSON array from the response (it may have surrounding text)
+          const text = stdout.trim();
+          const jsonMatch = text.match(/\[[\s\S]*?\]/);
+          if (!jsonMatch) {
+            console.warn('Hermes agent did not return JSON matches');
+            resolve([]);
+            return;
+          }
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (!Array.isArray(parsed)) {
+            resolve([]);
+            return;
+          }
+          resolve(parsed.filter((m: any) => typeof m.id === 'number' && typeof m.score === 'number'));
+        } catch (parseError) {
+          console.warn('Failed to parse Hermes agent response:', parseError);
+          resolve([]);
+        }
+      }
+    );
+  });
+}
+
+// No-op — Hermes agent doesn't need pre-computed embeddings
+async function indexItemForVisualSearch(_itemId: any) {
+  // Hermes agent analyzes images on-demand, no pre-indexing needed
+}
+
+// No-op — no longer using pgvector columns
+async function ensureImageMatchingColumns() {
+  // Kept for migration compatibility — no new columns needed
+}
 
 if (USE_POSTGRES) {
   pool = new pg.Pool({
@@ -177,106 +250,8 @@ const optionalValue = (value: any) => {
   return value;
 };
 
-const averageHashSize = 8;
 
-const vectorToSql = (embedding: number[]) => `[${embedding.join(',')}]`;
-
-const cosineSimilarity = (a: number[], b: number[]) => {
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < Math.min(a.length, b.length); i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  if (!normA || !normB) return 0;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-};
-
-async function createImageHash(file: any) {
-  if (!file?.buffer) return null;
-  try {
-    const { Jimp } = await import('jimp');
-    const image = await Jimp.read(file.buffer);
-    image.resize({ w: averageHashSize, h: averageHashSize }).greyscale();
-    const pixels: number[] = [];
-    for (let y = 0; y < averageHashSize; y++) {
-      for (let x = 0; x < averageHashSize; x++) {
-        const color = image.getPixelColor(x, y);
-        const red = (color >> 24) & 255;
-        const green = (color >> 16) & 255;
-        const blue = (color >> 8) & 255;
-        pixels.push(Math.round((red + green + blue) / 3));
-      }
-    }
-    const average = pixels.reduce((sum, value) => sum + value, 0) / pixels.length;
-    return pixels.map(value => value >= average ? '1' : '0').join('');
-  } catch (error: any) {
-    console.warn('Image hash failed:', error?.message || error);
-    return null;
-  }
-}
-
-const hashSimilarity = (a?: string | null, b?: string | null) => {
-  if (!a || !b || a.length !== b.length) return null;
-  let same = 0;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] === b[i]) same++;
-  }
-  return same / a.length;
-};
-
-const createLocalEmbedding = (text: string, dimensions = 1536) => {
-  const vector = new Array(dimensions).fill(0);
-  const tokens = text.toLowerCase().match(/[a-z0-9]+/g) || ['unknown'];
-  for (const token of tokens) {
-    let hash = 2166136261;
-    for (let i = 0; i < token.length; i++) {
-      hash ^= token.charCodeAt(i);
-      hash = Math.imul(hash, 16777619);
-    }
-    const index = Math.abs(hash) % dimensions;
-    vector[index] += 1;
-  }
-  const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
-  return vector.map(value => value / norm);
-};
-
-const getUploadedFileUrl = (file?: any) => {
-  if (!file) return null;
-  const filename = file.filename || `${Date.now()}-${file.originalname}`;
-  return IS_VERCEL
-    ? `data:${file.mimetype};base64,${file.buffer.toString('base64')}`
-    : `/uploads/${filename}`;
-};
-
-const fileFromImageUrl = async (imageUrl?: string | null) => {
-  if (!imageUrl) return null;
-  if (imageUrl.startsWith('/uploads/')) return null;
-  try {
-    const response = await withTimeout(fetch(imageUrl), 8000);
-    if (!response.ok) return null;
-    const arrayBuffer = await response.arrayBuffer();
-    const contentType = response.headers.get('content-type') || 'image/jpeg';
-    if (!contentType.startsWith('image/')) return null;
-    return {
-      buffer: Buffer.from(arrayBuffer),
-      mimetype: contentType,
-      originalname: 'item-image.jpg',
-    };
-  } catch {
-    return null;
-  }
-};
-
-const base64Url = (input: string | Buffer) => Buffer.from(input)
-  .toString('base64')
-  .replace(/=/g, '')
-  .replace(/\+/g, '-')
-  .replace(/\//g, '_');
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs = IMAGE_MATCH_TIMEOUT_MS) {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs = HERMES_MATCH_TIMEOUT_MS) {
   let timeout: NodeJS.Timeout | undefined;
   const timeoutPromise = new Promise<T>((_, reject) => {
     timeout = setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs);
@@ -288,57 +263,13 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs = IMAGE_MATCH_TIMEO
   }
 }
 
-function getGoogleServiceAccount() {
-  if (!GOOGLE_SERVICE_ACCOUNT_JSON) return null;
-  const raw = GOOGLE_SERVICE_ACCOUNT_JSON.trim();
-  const jsonText = raw.startsWith('{')
-    ? raw
-    : Buffer.from(raw, 'base64').toString('utf8');
-  return JSON.parse(jsonText);
-}
-
-async function getGoogleAccessToken() {
-  if (googleAccessTokenCache && googleAccessTokenCache.expiresAt > Date.now() + 60_000) {
-    return googleAccessTokenCache.token;
-  }
-
-  const serviceAccount = getGoogleServiceAccount();
-  if (!serviceAccount?.client_email || !serviceAccount?.private_key) {
-    throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is required for Vertex AI matching.');
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  const header = { alg: 'RS256', typ: 'JWT' };
-  const payload = {
-    iss: serviceAccount.client_email,
-    scope: 'https://www.googleapis.com/auth/cloud-platform',
-    aud: 'https://oauth2.googleapis.com/token',
-    exp: now + 3600,
-    iat: now,
-  };
-  const unsignedJwt = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(payload))}`;
-  const signature = crypto.sign('RSA-SHA256', Buffer.from(unsignedJwt), serviceAccount.private_key);
-  const assertion = `${unsignedJwt}.${base64Url(signature)}`;
-
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion,
-    }),
-  });
-  const data: any = await response.json().catch(() => ({}));
-  if (!response.ok || !data.access_token) {
-    throw new Error(data.error_description || data.error || 'Google access token request failed');
-  }
-
-  googleAccessTokenCache = {
-    token: data.access_token,
-    expiresAt: Date.now() + Number(data.expires_in || 3600) * 1000,
-  };
-  return googleAccessTokenCache.token;
-}
+const getUploadedFileUrl = (file?: any) => {
+  if (!file) return null;
+  const filename = file.filename || `${Date.now()}-${file.originalname}`;
+  return IS_VERCEL
+    ? `data:${file.mimetype};base64,${file.buffer.toString('base64')}`
+    : `/uploads/${filename}`;
+};
 
 async function uploadImageFile(file: any) {
   if (!file) return null;
@@ -361,363 +292,6 @@ async function uploadImageFile(file: any) {
     throw new Error(data.error?.message || 'Cloudinary upload failed');
   }
   return data.secure_url as string;
-}
-
-async function createClipImageEmbedding(file: any) {
-  if (!CLIP_SERVICE_URL || !file?.buffer) return null;
-
-  const formData = new FormData();
-  const blob = new Blob([file.buffer], { type: file.mimetype || 'image/jpeg' });
-  formData.append('image', blob, file.originalname || 'item.jpg');
-
-  const response = await fetch(`${CLIP_SERVICE_URL}/embed-image`, {
-    method: 'POST',
-    body: formData,
-  });
-  const data: any = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.detail || data.error || 'CLIP image embedding failed');
-  }
-
-  const embedding = data.embedding;
-  if (!Array.isArray(embedding)) throw new Error('CLIP service did not return an embedding.');
-  return embedding as number[];
-}
-
-async function createVertexImageEmbedding(file: any, text = '') {
-  if (!VERTEX_AI_PROJECT_ID || !GOOGLE_SERVICE_ACCOUNT_JSON || !file?.buffer) return null;
-
-  const accessToken = await getGoogleAccessToken();
-  const endpoint = `https://${VERTEX_AI_LOCATION}-aiplatform.googleapis.com/v1/projects/${VERTEX_AI_PROJECT_ID}/locations/${VERTEX_AI_LOCATION}/publishers/google/models/${VERTEX_AI_MODEL}:predict`;
-  const instance: any = {
-    image: {
-      bytesBase64Encoded: file.buffer.toString('base64'),
-      mimeType: file.mimetype || 'image/jpeg',
-    },
-  };
-  if (text.trim()) instance.text = text.trim();
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      instances: [instance],
-      parameters: { dimension: 512 },
-    }),
-  });
-  const data: any = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.error?.message || 'Vertex AI multimodal embedding failed');
-  }
-
-  const prediction = data.predictions?.[0];
-  const embedding = prediction?.imageEmbedding || prediction?.embedding || prediction?.embeddings;
-  if (!Array.isArray(embedding)) throw new Error('Vertex AI did not return an image embedding.');
-  return embedding as number[];
-}
-
-async function createManagedImageEmbedding(file: any, text = '') {
-  const vertexEmbedding = await withTimeout(createVertexImageEmbedding(file, text)).catch((error: any) => {
-    console.warn('Vertex AI embedding failed. Trying CLIP service:', error?.message || error);
-    return null;
-  });
-  if (vertexEmbedding) return { provider: 'vertex', embedding: vertexEmbedding };
-
-  const clipEmbedding = await withTimeout(createClipImageEmbedding(file)).catch((error: any) => {
-    console.warn('CLIP image embedding failed. Falling back to Gemini/text:', error?.message || error);
-    return null;
-  });
-  if (clipEmbedding) return { provider: 'clip', embedding: clipEmbedding };
-
-  return null;
-}
-
-async function describeImageWithGemini(file: any, context = '') {
-  if (!geminiApiKey || !file?.buffer || !file?.mimetype) return null;
-
-  const { GoogleGenAI } = await import("@google/genai");
-  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-  const response = await ai.models.generateContent({
-    model: GEMINI_VISION_MODEL,
-    contents: [
-      {
-        inlineData: {
-          mimeType: file.mimetype,
-          data: file.buffer.toString('base64'),
-        },
-      },
-      `Describe this lost-and-found item for visual search. Focus on object type, colors, brand text, shape, materials, visible labels, damage, and distinctive details. Return one compact searchable paragraph. ${context}`,
-    ],
-  });
-  return response.text?.trim() || null;
-}
-
-async function describeImageWithGeminiUrl(imageUrl: string, context = '') {
-  if (!geminiApiKey || !imageUrl) return null;
-
-  const { GoogleGenAI } = await import("@google/genai");
-  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-  const response = await ai.models.generateContent({
-    model: GEMINI_VISION_MODEL,
-    contents: [
-      {
-        fileData: {
-          mimeType: 'image/jpeg',
-          fileUri: imageUrl,
-        },
-      },
-      `Describe this lost-and-found item for visual search. Focus on object type, colors, brand text, shape, materials, visible labels, damage, and distinctive details. Return one compact searchable paragraph. ${context}`,
-    ],
-  });
-  return response.text?.trim() || null;
-}
-
-async function createGeminiEmbedding(text: string) {
-  if (!geminiApiKey) return null;
-
-  const { GoogleGenAI } = await import("@google/genai");
-  const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-  const response: any = await ai.models.embedContent({
-    model: GEMINI_EMBEDDING_MODEL,
-    contents: text,
-  });
-  const embedding = response.embeddings?.[0]?.values || response.embedding?.values || response.values;
-  return Array.isArray(embedding) ? embedding as number[] : null;
-}
-
-const tokenizeForMatch = (text: string) => new Set((text.toLowerCase().match(/[a-z0-9]+/g) || [])
-  .filter(token => token.length > 2 && !['the', 'and', 'with', 'this', 'that', 'item', 'photo', 'uploaded', 'lost', 'found', 'report'].includes(token)));
-
-const textTokenSimilarity = (a: string, b: string) => {
-  const setA = tokenizeForMatch(a);
-  const setB = tokenizeForMatch(b);
-  if (!setA.size || !setB.size) return 0;
-  let intersection = 0;
-  setA.forEach(token => {
-    if (setB.has(token)) intersection++;
-  });
-  return intersection / Math.max(setA.size, setB.size);
-};
-
-const calibrateSimilarityScore = (rawScore: number, tokenScore: number) => {
-  const normalizedRaw = Math.max(0, Math.min(1, rawScore));
-  const normalizedToken = Math.max(0, Math.min(1, tokenScore));
-  const boostedVector = normalizedRaw <= 0 ? 0 : Math.sqrt(normalizedRaw);
-  return Math.max(boostedVector, normalizedToken);
-};
-
-async function rerankMatchesWithGemini(file: any, queryDescription: string, matches: any[]) {
-  if (!geminiApiKey || !file?.buffer || !file?.mimetype || matches.length === 0) return matches;
-
-  try {
-    const { GoogleGenAI, Type } = await import("@google/genai");
-    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-    const candidates = matches.slice(0, 10).map((item: any, index: number) => ({
-      index,
-      id: item.id,
-      type: item.type,
-      title: item.title,
-      category: item.category,
-      description: item.description,
-      location: item.location,
-      visual_description: item.visual_description,
-      current_score: item.similarity_score,
-    }));
-
-    const response = await ai.models.generateContent({
-      model: GEMINI_VISION_MODEL,
-      contents: [
-        {
-          inlineData: {
-            mimeType: file.mimetype,
-            data: file.buffer.toString('base64'),
-          },
-        },
-        `You are reranking lost-and-found search results using the query photo and candidate item records.
-Query visual description: ${queryDescription}
-
-Candidates:
-${JSON.stringify(candidates)}
-
-Score each candidate from 0 to 1 based on whether it is likely the same physical item. Prioritize object type first, then color, brand/text, shape, material, and distinctive marks. Penalize different object types heavily even if colors match. Return JSON only.`,
-      ],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              id: { type: Type.STRING },
-              score: { type: Type.NUMBER },
-              reason: { type: Type.STRING },
-            },
-            required: ['id', 'score'],
-          },
-        },
-      },
-    });
-
-    const scored = JSON.parse(response.text || '[]') as Array<{ id: string | number; score?: number; reason?: string }>;
-    const scoreById = new Map<string, { id: string | number; score?: number; reason?: string }>(scored.map((item) => [String(item.id), item]));
-    return matches
-      .map((item: any) => {
-        const aiScore = scoreById.get(String(item.id));
-        if (!aiScore) return item;
-        const normalizedAiScore = Math.max(0, Math.min(1, Number(aiScore.score || 0)));
-        return {
-          ...item,
-          ai_score: normalizedAiScore,
-          match_reason: aiScore.reason,
-          similarity_score: Math.max(Number(item.similarity_score || 0) * 0.35 + normalizedAiScore * 0.65, normalizedAiScore),
-        };
-      })
-      .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0));
-  } catch (error: any) {
-    console.warn('Gemini rerank failed. Keeping vector results:', error?.message || error);
-    return matches;
-  }
-}
-
-async function describeImage(imageUrl: string, context = '', file?: any) {
-  if (!OPENAI_API_KEY) {
-    const geminiDescription = await describeImageWithGemini(file, context);
-    if (geminiDescription) return geminiDescription;
-
-    return context.trim() || 'Uploaded item photo for visual matching.';
-  }
-
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: OPENAI_VISION_MODEL,
-      input: [{
-        role: 'user',
-        content: [
-          {
-            type: 'input_text',
-            text: `Describe this lost-and-found item for visual search. Focus on object type, colors, brand text, shape, materials, visible labels, damage, and distinctive details. Return one compact searchable paragraph. ${context}`,
-          },
-          { type: 'input_image', image_url: imageUrl },
-        ],
-      }],
-    }),
-  });
-
-  const data: any = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    console.warn('OpenAI vision request failed, using fallback:', data.error?.message || response.statusText);
-    const geminiDescription = await describeImageWithGemini(file, context);
-    if (geminiDescription) return geminiDescription;
-    return context.trim() || 'Uploaded item photo for visual matching.';
-  }
-  const outputText = data.output_text
-    || data.output?.flatMap((item: any) => item.content || []).map((part: any) => part.text).filter(Boolean).join(' ');
-  if (!outputText) throw new Error('OpenAI did not return an image description.');
-  return String(outputText).trim();
-}
-
-async function createEmbedding(text: string) {
-  if (!OPENAI_API_KEY) {
-    return await createGeminiEmbedding(text) || createLocalEmbedding(text);
-  }
-
-  const response = await fetch('https://api.openai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: OPENAI_EMBEDDING_MODEL,
-      input: text,
-    }),
-  });
-
-  const data: any = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    console.warn('OpenAI embedding request failed, using Gemini/local fallback:', data.error?.message || response.statusText);
-    return await createGeminiEmbedding(text) || createLocalEmbedding(text);
-  }
-  const embedding = data.data?.[0]?.embedding;
-  if (!Array.isArray(embedding)) throw new Error('OpenAI did not return an embedding.');
-  return embedding as number[];
-}
-
-async function updateItemEmbedding(itemId: any, description: string, embedding: number[]) {
-  await db.run(
-    'UPDATE items SET visual_description = ?, embedding_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-    [description, JSON.stringify(embedding), itemId]
-  );
-
-  if (db.type === 'postgres' && pgVectorReady) {
-    await db.run(
-      'UPDATE items SET embedding_vector = ?::vector, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [vectorToSql(embedding), itemId]
-    );
-  }
-}
-
-async function updateItemClipEmbedding(itemId: any, embedding: number[]) {
-  await db.run(
-    'UPDATE items SET clip_embedding_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-    [JSON.stringify(embedding), itemId]
-  );
-
-  if (db.type === 'postgres' && clipVectorReady) {
-    await db.run(
-      'UPDATE items SET clip_embedding_vector = ?::vector, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [vectorToSql(embedding), itemId]
-    );
-  }
-}
-
-async function updateItemImageHash(itemId: any, imageHash: string) {
-  await db.run(
-    'UPDATE items SET image_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-    [imageHash, itemId]
-  );
-}
-
-function getStoredClipEmbedding(item: any) {
-  if (!item?.clip_embedding_json) return null;
-  try {
-    const parsed = JSON.parse(item.clip_embedding_json);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed as number[] : null;
-  } catch {
-    return null;
-  }
-}
-
-async function indexItemForVisualSearch(itemId: any) {
-  try {
-    await ensureImageMatchingColumns();
-    const item = await db.get('SELECT * FROM items WHERE id = ?', [itemId]);
-    if (!item) return;
-
-    const context = `Known item details: title="${item.title || ''}", type="${item.type || ''}", category="${item.category || ''}", description="${item.description || ''}", location="${item.location || ''}".`;
-    const file = await fileFromImageUrl(item.image_url);
-    const visualDescription = item.visual_description || (file ? await describeImage('', context, file).catch(() => null) : null) || context;
-    const searchableText = [item.title, item.description, item.category, item.location, visualDescription].filter(Boolean).join('\n');
-    const textEmbedding = await createEmbedding(searchableText);
-    await updateItemEmbedding(item.id, visualDescription, textEmbedding);
-
-    if (file) {
-      const imageHash = await createImageHash(file);
-      if (imageHash) await updateItemImageHash(item.id, imageHash);
-      const imageEmbedding = await createManagedImageEmbedding(file, searchableText);
-      if (imageEmbedding) await updateItemClipEmbedding(item.id, imageEmbedding.embedding);
-    }
-  } catch (error: any) {
-    console.warn('Visual search indexing failed:', error?.message || error);
-  }
 }
 
 function createPostgresDb() {
@@ -773,30 +347,6 @@ async function ensureColumn(table: string, column: string, definition: string) {
   await db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${sqliteDefinition}`);
 }
 
-async function ensureVectorColumns() {
-  if (db.type !== 'postgres') return;
-  try {
-    await pool.query('CREATE EXTENSION IF NOT EXISTS vector');
-    await pool.query('ALTER TABLE items ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)');
-    await pool.query('ALTER TABLE items ADD COLUMN IF NOT EXISTS clip_embedding_vector vector(512)');
-    await pool.query('CREATE INDEX IF NOT EXISTS items_embedding_vector_idx ON items USING ivfflat (embedding_vector vector_cosine_ops) WITH (lists = 100)');
-    await pool.query('CREATE INDEX IF NOT EXISTS items_clip_embedding_vector_idx ON items USING ivfflat (clip_embedding_vector vector_cosine_ops) WITH (lists = 100)');
-    pgVectorReady = true;
-    clipVectorReady = true;
-  } catch (error: any) {
-    pgVectorReady = false;
-    clipVectorReady = false;
-    console.warn('pgvector is unavailable. Falling back to JSON similarity search:', error?.message || error);
-  }
-}
-
-async function ensureImageMatchingColumns() {
-  await ensureColumn('items', 'visual_description', 'TEXT');
-  await ensureColumn('items', 'embedding_json', 'TEXT');
-  await ensureColumn('items', 'clip_embedding_json', 'TEXT');
-  await ensureColumn('items', 'image_hash', 'TEXT');
-  await ensureVectorColumns();
-}
 
 async function repairDemoAccounts() {
   const demoAdminEmail = 'admin@paknaan.gov'.toLowerCase();
@@ -1420,224 +970,60 @@ async function startServer() {
     res.json({ message: 'Item deleted successfully' });
   });
 
-  const uploadItemHandler = async (req: any, res: any) => {
-    try {
-      await ensureImageMatchingColumns();
-      const { title, description, location } = req.body;
-      if (!req.file) return res.status(400).json({ error: 'Image file is required' });
-      if (!title || !description || !location) {
-        return res.status(400).json({ error: 'Title, description, and location are required' });
-      }
-
-      const imageUrl = await uploadImageFile(req.file);
-      const visualDescription = await describeImage(
-        imageUrl,
-        `Known item details: title="${title}", description="${description}", location="${location}".`,
-        req.file
-      );
-      const searchableText = [title, description, location, visualDescription].filter(Boolean).join('\n');
-      const embedding = await createEmbedding(searchableText);
-      const imageEmbedding = await createManagedImageEmbedding(req.file, searchableText);
-      const imageHash = await createImageHash(req.file);
-
-      const result = await db.run(`
-        INSERT INTO items (title, description, type, category, location, purok, image_url, user_id, status, visual_description, embedding_json, image_hash)
-        VALUES (?, ?, 'found', 'Others', ?, ?, ?, ?, 'posted', ?, ?, ?)
-      `, [
-        title,
-        description,
-        location,
-        req.user?.purok || 'Outside Barangay Paknaan',
-        imageUrl,
-        req.user?.id || null,
-        visualDescription,
-        JSON.stringify(embedding),
-        imageHash,
-      ]);
-      await updateItemEmbedding(result.lastID, visualDescription, embedding);
-      if (imageEmbedding) await updateItemClipEmbedding(result.lastID, imageEmbedding.embedding);
-      await logActivity(req.user.id, 'create_image_match_item', 'item', result.lastID, `Created found item with image matching: ${title}`);
-
-      res.status(201).json({
-        id: result.lastID,
-        image_url: imageUrl,
-        title,
-        description,
-        location,
-        visual_description: visualDescription,
-      });
-    } catch (error: any) {
-      console.error('Image item upload failed:', error);
-      res.status(500).json({ error: error.message || 'Image item upload failed' });
-    }
-  };
-
   const searchItemHandler = async (req: any, res: any) => {
     try {
-      await ensureImageMatchingColumns();
       if (!req.file) return res.status(400).json({ error: 'Image file is required' });
 
-      const imageUrl = getUploadedFileUrl(req.file);
-      let visualDescription = '';
-      let queryText = 'Uploaded item photo for matching.';
-      const queryImageHash = await createImageHash(req.file);
-      const imageEmbedding = await createManagedImageEmbedding(req.file, queryText);
-      const clipEmbedding = imageEmbedding?.embedding || null;
-      let embedding: number[] = [];
-      let matches: any[] = [];
+      // Save the uploaded image to disk so Hermes can access it
+      const fs = await import('fs');
+      const uploadsDir = './uploads';
+      if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+      const imagePath = `${uploadsDir}/query-${Date.now()}.jpg`;
+      fs.writeFileSync(imagePath, req.file.buffer);
 
-      if (clipEmbedding && db.type === 'postgres' && clipVectorReady) {
-        matches = await db.all(`
-          SELECT id, title, description, type, category, location, image_url, visual_description, image_hash,
-            1 - (clip_embedding_vector <=> ?::vector) AS clip_score
-          FROM items
-          WHERE type IN ('lost', 'found')
-            AND status IN ('posted', 'approved', 'matched', 'pending')
-            AND clip_embedding_vector IS NOT NULL
-          ORDER BY clip_embedding_vector <=> ?::vector
-          LIMIT 12
-        `, [vectorToSql(clipEmbedding), vectorToSql(clipEmbedding)]);
-      } else if (db.type === 'postgres' && pgVectorReady) {
-        visualDescription = await withTimeout(describeImage('', '', req.file), 8000).catch(() => '');
-        queryText = visualDescription || queryText;
-        embedding = await createEmbedding(visualDescription || queryText);
-        matches = await db.all(`
-          SELECT id, title, description, type, category, location, image_url, visual_description, image_hash,
-            1 - (embedding_vector <=> ?::vector) AS vector_score
-          FROM items
-          WHERE type IN ('lost', 'found')
-            AND status IN ('posted', 'approved', 'matched', 'pending')
-            AND embedding_vector IS NOT NULL
-          ORDER BY embedding_vector <=> ?::vector
-          LIMIT 12
-        `, [vectorToSql(embedding), vectorToSql(embedding)]);
-      } else {
-        visualDescription = await withTimeout(describeImage('', '', req.file), 8000).catch(() => '');
-        queryText = visualDescription || queryText;
-        embedding = await createEmbedding(visualDescription || queryText);
-        const candidates = await db.all(`
-          SELECT id, title, description, type, category, location, image_url, visual_description, image_hash, embedding_json, clip_embedding_json
-          FROM items
-          WHERE type IN ('lost', 'found')
-            AND status IN ('posted', 'approved', 'matched', 'pending')
-          ORDER BY created_at DESC
-          LIMIT 80
-        `);
-        const scoredMatches = [];
-        for (const item of candidates) {
-          const storedClipEmbedding = getStoredClipEmbedding(item);
-          let itemEmbedding: number[] = [];
-          try {
-            itemEmbedding = JSON.parse(item.embedding_json || '[]');
-          } catch {
-            itemEmbedding = [];
-          }
-          if (!itemEmbedding.length) continue;
-          const { embedding_json, clip_embedding_json, ...publicItem } = item;
-          const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
-          const vectorScore = cosineSimilarity(embedding, itemEmbedding);
-          const clipScore = clipEmbedding && storedClipEmbedding ? cosineSimilarity(clipEmbedding, storedClipEmbedding) : null;
-          const imageHashScore = hashSimilarity(queryImageHash, item.image_hash);
-          const tokenScore = textTokenSimilarity(queryText, itemText);
-          const calibratedTextScore = calibrateSimilarityScore(vectorScore, tokenScore);
-          scoredMatches.push({
-            ...publicItem,
-            vector_score: vectorScore,
-            clip_score: clipScore,
-            image_hash_score: imageHashScore,
-            token_score: tokenScore,
-            similarity_score: Math.max(imageHashScore ?? 0, clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4)),
-          });
-        }
-        matches = scoredMatches
-          .sort((a: any, b: any) => b.similarity_score - a.similarity_score)
-          .slice(0, 12);
+      // Fetch candidate items from the database
+      const candidates = await db.all(`
+        SELECT id, title, description, type, category, location, purok, image_url
+        FROM items
+        WHERE type IN ('lost', 'found')
+          AND status IN ('posted', 'approved', 'matched', 'pending')
+        ORDER BY created_at DESC
+        LIMIT 100
+      `);
+
+      if (candidates.length === 0) {
+        res.json({ query_image_url: getUploadedFileUrl(req.file), query_description: '', matches: [] });
+        return;
       }
 
-      if (db.type === 'postgres' && pgVectorReady && matches.length < 5) {
-        const existingIds = new Set(matches.map((item: any) => Number(item.id)));
-        const candidates = await db.all(`
-          SELECT id, title, description, type, category, location, image_url, visual_description, image_hash, embedding_json, clip_embedding_json
-          FROM items
-          WHERE type IN ('lost', 'found')
-            AND status IN ('posted', 'approved', 'matched', 'pending')
-          ORDER BY created_at DESC
-          LIMIT 80
-        `);
-        const scoredMatches = [...matches];
-        for (const item of candidates) {
-          if (existingIds.has(Number(item.id))) continue;
-          const storedClipEmbedding = getStoredClipEmbedding(item);
-          let itemEmbedding: number[] = [];
-          try {
-            itemEmbedding = JSON.parse(item.embedding_json || '[]');
-          } catch {
-            itemEmbedding = [];
-          }
-          if (!itemEmbedding.length) continue;
-          const { embedding_json, clip_embedding_json, ...publicItem } = item;
-          const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
-          const vectorScore = cosineSimilarity(embedding, itemEmbedding);
-          const clipScore = clipEmbedding && storedClipEmbedding ? cosineSimilarity(clipEmbedding, storedClipEmbedding) : null;
-          const imageHashScore = hashSimilarity(queryImageHash, item.image_hash);
-          const tokenScore = textTokenSimilarity(queryText, itemText);
-          const calibratedTextScore = calibrateSimilarityScore(vectorScore, tokenScore);
-          scoredMatches.push({
-            ...publicItem,
-            vector_score: vectorScore,
-            clip_score: clipScore,
-            image_hash_score: imageHashScore,
-            token_score: tokenScore,
-            similarity_score: Math.max(imageHashScore ?? 0, clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4)),
-          });
-        }
-        matches = scoredMatches
-          .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
-          .slice(0, 12);
-      }
+      // Call Hermes agent to analyze the image and rank matches
+      const hermesResults = await matchWithHermes(imagePath, candidates);
 
-      matches = matches
-        .map((item: any) => {
-          const itemText = [item.title, item.description, item.category, item.location, item.visual_description].filter(Boolean).join('\n');
-          const vectorScore = Number(item.vector_score ?? item.similarity_score ?? 0);
-          const clipScore = item.clip_score === undefined || item.clip_score === null ? null : Number(item.clip_score || 0);
-          const imageHashScore = item.image_hash_score === undefined || item.image_hash_score === null
-            ? hashSimilarity(queryImageHash, item.image_hash)
-            : Number(item.image_hash_score || 0);
-          const tokenScore = Number(item.token_score ?? textTokenSimilarity(queryText, itemText));
-          const calibratedTextScore = calibrateSimilarityScore(vectorScore, tokenScore);
+      // Build a map for quick lookup
+      const itemMap = new Map(candidates.map((item: any) => [Number(item.id), item]));
+
+      // Merge Hermes results with item details
+      const matches = hermesResults
+        .map((result: any) => {
+          const item = itemMap.get(Number(result.id));
+          if (!item) return null;
           return {
             ...item,
-            vector_score: vectorScore,
-            clip_score: clipScore,
-            image_hash_score: imageHashScore,
-            token_score: tokenScore,
-            similarity_score: Math.max(imageHashScore ?? 0, clipScore === null ? calibratedTextScore : Math.max(clipScore, calibratedTextScore * 0.4)),
+            similarity_score: Number(result.score || 0),
+            match_reason: result.reason || null,
           };
         })
-        .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
-        .slice(0, 12);
-
-      if (IMAGE_MATCH_RERANK) {
-        matches = await withTimeout(rerankMatchesWithGemini(req.file, queryText, matches.slice(0, 5)), 10000).catch(() => matches);
-      }
-      matches = matches
+        .filter(Boolean)
         .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
         .slice(0, 5);
 
+      // Clean up the temporary query image
+      try { fs.unlinkSync(imagePath); } catch { /* ignore */ }
+
       res.json({
-        query_image_url: imageUrl,
-        query_description: visualDescription,
-        matches: matches.map((item: any) => ({
-          ...item,
-          similarity_score: Number(item.similarity_score ?? calibrateSimilarityScore(Number(item.vector_score || 0), 0)),
-          vector_score: Number(item.vector_score || 0),
-          clip_score: item.clip_score === undefined || item.clip_score === null ? null : Number(item.clip_score || 0),
-          image_hash_score: item.image_hash_score === undefined || item.image_hash_score === null ? null : Number(item.image_hash_score || 0),
-          token_score: Number(item.token_score || 0),
-          ai_score: item.ai_score === undefined ? null : Number(item.ai_score || 0),
-          match_reason: item.match_reason || null,
-        })),
+        query_image_url: getUploadedFileUrl(req.file),
+        query_description: 'Analyzed by AI visual matching',
+        matches,
       });
     } catch (error: any) {
       console.error('Image item search failed:', error);
@@ -1645,7 +1031,6 @@ async function startServer() {
     }
   };
 
-  app.post(['/api/upload-item', '/upload-item'], authenticateToken, upload.single('image'), uploadItemHandler);
   app.post(['/api/search-item', '/search-item'], authenticateToken, upload.single('image'), searchItemHandler);
 
   // ==================== CLAIM ROUTES ====================
