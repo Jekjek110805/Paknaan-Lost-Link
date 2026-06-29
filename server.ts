@@ -1051,12 +1051,24 @@ async function startServer() {
     try {
       if (!req.file) return res.status(400).json({ error: 'Image file is required' });
 
-      // Save the uploaded image to disk so Hermes can access it
+      // Hermes needs a file on disk. With diskStorage (local) multer already
+      // wrote the file and populates req.file.path; with memoryStorage (Vercel)
+      // only req.file.buffer is set, so we write it out ourselves.
       const fs = await import('fs');
       const uploadsDir = './uploads';
       if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-      const imagePath = `${uploadsDir}/query-${Date.now()}.jpg`;
-      fs.writeFileSync(imagePath, req.file.buffer);
+
+      let imagePath: string;
+      let isTempImage = false;
+      if (req.file.path) {
+        imagePath = req.file.path;
+      } else if (req.file.buffer) {
+        imagePath = `${uploadsDir}/query-${Date.now()}.jpg`;
+        fs.writeFileSync(imagePath, req.file.buffer);
+        isTempImage = true;
+      } else {
+        return res.status(400).json({ error: 'Uploaded image could not be read' });
+      }
 
       // Fetch candidate items from the database
       const candidates = await db.all(`
@@ -1094,8 +1106,11 @@ async function startServer() {
         .sort((a: any, b: any) => Number(b.similarity_score || 0) - Number(a.similarity_score || 0))
         .slice(0, 5);
 
-      // Clean up the temporary query image
-      try { fs.unlinkSync(imagePath); } catch { /* ignore */ }
+      // Clean up only the temp image we wrote ourselves; the diskStorage
+      // upload is kept because the response references it as query_image_url.
+      if (isTempImage) {
+        try { fs.unlinkSync(imagePath); } catch { /* ignore */ }
+      }
 
       res.json({
         query_image_url: getUploadedFileUrl(req.file),
