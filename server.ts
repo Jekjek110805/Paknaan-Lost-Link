@@ -1055,7 +1055,8 @@ async function startServer() {
       // wrote the file and populates req.file.path; with memoryStorage (Vercel)
       // only req.file.buffer is set, so we write it out ourselves.
       const fs = await import('fs');
-      const uploadsDir = './uploads';
+      const nodePath = await import('path');
+      const uploadsDir = IS_VERCEL ? '/tmp' : './uploads';
       if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
       let imagePath: string;
@@ -1068,6 +1069,7 @@ async function startServer() {
         isTempImage = true;
       } else {
         return res.status(400).json({ error: 'Uploaded image could not be read' });
+      }
       }
 
       // Fetch candidate items from the database
